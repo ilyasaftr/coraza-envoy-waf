@@ -8,7 +8,6 @@ on:
       - completed
     branches:
       - main
-      - dev
 
 concurrency:
   group: dockerpush-${{ github.workflow }}-${{ github.event.workflow_run.head_branch }}
@@ -17,7 +16,7 @@ concurrency:
 env:
   REGISTRY: ghcr.io
   IMAGE_REPO: coraza-envoy-waf
-  GO_BUILD_TAGS: memoize_builders,coraza.rule.no_regex_multiline
+  GO_BUILD_TAGS: memoize_builders,coraza.rule.no_regex_multiline,re2_cgo,libinjection_cgo
 
 jobs:
   build_amd64:
@@ -53,17 +52,10 @@ jobs:
         id: image
         run: |
           image="${{ env.REGISTRY }}/${GITHUB_REPOSITORY_OWNER,,}/${{ env.IMAGE_REPO }}"
-          branch="${{ github.event.workflow_run.head_branch }}"
-          default_branch="${{ github.event.repository.default_branch }}"
-          branch="${branch#refs/heads/}"
-          tags="$image:$branch"
-          if [ "$branch" = "$default_branch" ] || [ "$branch" = "main" ] || [ "$branch" = "master" ]; then
-            tags="$tags"$'\n'"$image:latest"
-          fi
           echo "image=$image" >> "$GITHUB_OUTPUT"
           {
             echo "tags<<EOF"
-            echo "$tags"
+            echo "$image:latest"
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
@@ -113,17 +105,10 @@ jobs:
         id: image
         run: |
           image="${{ env.REGISTRY }}/${GITHUB_REPOSITORY_OWNER,,}/${{ env.IMAGE_REPO }}"
-          branch="${{ github.event.workflow_run.head_branch }}"
-          default_branch="${{ github.event.repository.default_branch }}"
-          branch="${branch#refs/heads/}"
-          tags="$image:$branch"
-          if [ "$branch" = "$default_branch" ] || [ "$branch" = "main" ] || [ "$branch" = "master" ]; then
-            tags="$tags"$'\n'"$image:latest"
-          fi
           echo "image=$image" >> "$GITHUB_OUTPUT"
           {
             echo "tags<<EOF"
-            echo "$tags"
+            echo "$image:latest"
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
@@ -148,6 +133,9 @@ jobs:
     permissions:
       contents: read
       packages: write
+    outputs:
+      previous_latest_digest: ${{ steps.rollback_prep.outputs.previous_latest_digest }}
+      rollback_command: ${{ steps.rollback_prep.outputs.rollback_command }}
     steps:
       - name: Check out the repo
         uses: actions/checkout@v4
@@ -169,19 +157,44 @@ jobs:
         id: image
         run: |
           image="${{ env.REGISTRY }}/${GITHUB_REPOSITORY_OWNER,,}/${{ env.IMAGE_REPO }}"
-          branch="${{ github.event.workflow_run.head_branch }}"
-          default_branch="${{ github.event.repository.default_branch }}"
-          branch="${branch#refs/heads/}"
-          tags="$image:$branch"
-          if [ "$branch" = "$default_branch" ] || [ "$branch" = "main" ] || [ "$branch" = "master" ]; then
-            tags="$tags"$'\n'"$image:latest"
-          fi
           echo "image=$image" >> "$GITHUB_OUTPUT"
           {
             echo "tags<<EOF"
-            echo "$tags"
+            echo "$image:latest"
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
+
+      - name: Prepare rollback details
+        id: rollback_prep
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="${{ steps.image.outputs.image }}"
+          latest_output="$(docker buildx imagetools inspect "${image}:latest" 2>/dev/null || true)"
+          previous_latest_digest="$(printf '%s\n' "${latest_output}" | awk '/^Digest: / { print $2; exit }')"
+          if [ -n "${previous_latest_digest}" ]; then
+            rollback_command="docker buildx imagetools create -t ${image}:latest ${image}@${previous_latest_digest}"
+            {
+              echo "previous_latest_digest=${previous_latest_digest}"
+              echo "rollback_command=${rollback_command}"
+            } >> "$GITHUB_OUTPUT"
+            {
+              echo "### Rollback prep"
+              echo ""
+              echo "- previous_latest_digest: \`${previous_latest_digest}\`"
+              echo "- rollback_command: \`${rollback_command}\`"
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            {
+              echo "previous_latest_digest="
+              echo "rollback_command="
+            } >> "$GITHUB_OUTPUT"
+            {
+              echo "### Rollback prep"
+              echo ""
+              echo "- no existing \`latest\` manifest digest found"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Create and push manifest list for each tag
         run: |

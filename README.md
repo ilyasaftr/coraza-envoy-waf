@@ -10,6 +10,17 @@ A gRPC `ext_proc` service that inspects HTTP requests and responses using [Coraz
 - Prometheus metrics and health endpoint
 - No Proxy-WASM required
 
+## Performance Build
+
+- Default Docker/CI builds now use CGO with `memoize_builders,coraza.rule.no_regex_multiline,re2_cgo,libinjection_cgo`.
+- The service contract stays the same (`ext_proc` decisions, deny headers/details, profile resolution, and fail-closed semantics).
+- Before promoting a perf image, run the contract checks and confirm the deny envelope still matches current behavior:
+  - Ensure native deps are installed (`re2` + `libinjection`) or run inside the project CI workflow.
+  - `go test -tags "memoize_builders,coraza.rule.no_regex_multiline,re2_cgo,libinjection_cgo" ./...`
+  - `go test ./internal/extproc/... ./internal/waf/...`
+- Roll back by pinning the previous image digest instead of reusing a mutable tag:
+  - `CORAZA_EXT_PROC_IMAGE=ghcr.io/<org>/coraza-envoy-waf@sha256:<previous_digest> make apply-global`
+
 ## Configuration
 
 | Variable | Default | Description |

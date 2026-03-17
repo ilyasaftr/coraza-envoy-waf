@@ -4,6 +4,7 @@ go 1.26.0
 
 require (
 	github.com/corazawaf/coraza-coreruleset/v4 v4.24.1
+	github.com/corazawaf/coraza-wasilibs v0.2.0
 	github.com/corazawaf/coraza/v3 v3.4.0
 	github.com/envoyproxy/go-control-plane/envoy v1.37.0
 	github.com/prometheus/client_golang v1.23.2
@@ -32,10 +33,14 @@ require (
 	github.com/prometheus/common v0.66.1 // indirect
 	github.com/prometheus/procfs v0.16.1 // indirect
 	github.com/rogpeppe/go-internal v1.12.0 // indirect
+	github.com/tetratelabs/wazero v1.7.2 // indirect
 	github.com/tidwall/gjson v1.18.0 // indirect
 	github.com/tidwall/match v1.1.1 // indirect
 	github.com/tidwall/pretty v1.2.1 // indirect
 	github.com/valllabh/ocsf-schema-golang v1.0.3 // indirect
+	github.com/wasilibs/go-aho-corasick v0.6.0 // indirect
+	github.com/wasilibs/go-libinjection v0.5.0 // indirect
+	github.com/wasilibs/go-re2 v1.6.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.2 // indirect
 	golang.org/x/net v0.51.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect

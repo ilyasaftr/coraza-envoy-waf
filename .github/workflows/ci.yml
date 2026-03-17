@@ -15,7 +15,9 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  GO_BUILD_TAGS: memoize_builders,coraza.rule.no_regex_multiline
+  GO_BUILD_TAGS: memoize_builders,coraza.rule.no_regex_multiline,re2_cgo,libinjection_cgo
+  CGO_ENABLED: "1"
+  LIBINJECTION_VERSION: 4aa3894b21d03d9d8fc364505c0617d2aca73fc1
 
 jobs:
   test:
@@ -33,5 +35,33 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Install CGO dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            autoconf \
+            automake \
+            build-essential \
+            curl \
+            libre2-dev \
+            libtool \
+            pkg-config
+          tmpdir="$(mktemp -d)"
+          curl -fsSL "https://github.com/libinjection/libinjection/archive/${LIBINJECTION_VERSION}.tar.gz" \
+            | tar -xz --strip-components=1 -C "${tmpdir}"
+          pushd "${tmpdir}" >/dev/null
+          autoreconf -fi
+          ./configure
+          make -j"$(nproc)"
+          sudo make install
+          popd >/dev/null
+          rm -rf "${tmpdir}"
+          sudo ldconfig
+
       - name: Run unit tests
         run: go test -tags "${GO_BUILD_TAGS}" ./...
+
+      - name: Smoke Docker build
+        run: docker build --target smoke --build-arg GO_BUILD_TAGS="${GO_BUILD_TAGS}" .

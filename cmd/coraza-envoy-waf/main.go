@@ -13,6 +13,7 @@ import (
 	"github.com/ilyasaftr/coraza-envoy-waf/internal/config"
 	"github.com/ilyasaftr/coraza-envoy-waf/internal/extproc"
 	"github.com/ilyasaftr/coraza-envoy-waf/internal/metrics"
+	"github.com/ilyasaftr/coraza-envoy-waf/internal/perf"
 	"github.com/ilyasaftr/coraza-envoy-waf/internal/server"
 	"github.com/ilyasaftr/coraza-envoy-waf/internal/waf"
 	"github.com/prometheus/client_golang/prometheus"
@@ -30,6 +31,9 @@ func main() {
 		Level: cfg.LogLevel,
 	}))
 	slog.SetDefault(logger)
+
+	// Register optional RE2/libinjection implementations before any WAF is constructed.
+	perf.Register()
 
 	registry := prometheus.NewRegistry()
 	recorder, err := metrics.NewPrometheusRecorder(registry)
