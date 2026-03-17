@@ -17,6 +17,7 @@ concurrency:
 env:
   REGISTRY: ghcr.io
   IMAGE_REPO: coraza-envoy-waf
+  GO_BUILD_TAGS: memoize_builders,coraza.rule.no_regex_multiline
 
 jobs:
   build_amd64:
@@ -73,6 +74,8 @@ jobs:
           context: .
           platforms: linux/amd64
           provenance: false
+          build-args: |
+            GO_BUILD_TAGS=${{ env.GO_BUILD_TAGS }}
           outputs: type=image,name=${{ steps.image.outputs.image }},push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -131,6 +134,8 @@ jobs:
           context: .
           platforms: linux/arm64/v8
           provenance: false
+          build-args: |
+            GO_BUILD_TAGS=${{ env.GO_BUILD_TAGS }}
           outputs: type=image,name=${{ steps.image.outputs.image }},push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha
           cache-to: type=gha,mode=max

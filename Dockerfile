@@ -2,6 +2,7 @@ FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS build
 
 ARG TARGETOS
 ARG TARGETARCH
+ARG GO_BUILD_TAGS="memoize_builders,coraza.rule.no_regex_multiline"
 
 WORKDIR /src
 
@@ -10,7 +11,7 @@ RUN go mod download
 
 COPY . .
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} \
-    go build -trimpath -ldflags="-s -w" -o /out/coraza-envoy-waf ./cmd/coraza-envoy-waf
+    go build -tags="${GO_BUILD_TAGS}" -trimpath -ldflags="-s -w" -o /out/coraza-envoy-waf ./cmd/coraza-envoy-waf
 
 FROM gcr.io/distroless/static-debian12:nonroot
 

@@ -11,9 +11,16 @@ import (
 
 	extprocv3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/keepalive"
 )
 
-const shutdownTimeout = 10 * time.Second
+const (
+	shutdownTimeout          = 10 * time.Second
+	grpcKeepaliveIdle       = 5 * time.Minute
+	grpcKeepaliveTime       = 2 * time.Minute
+	grpcKeepaliveTimeout    = 20 * time.Second
+	grpcKeepaliveMinPingGap = 30 * time.Second
+)
 
 type App struct {
 	logger *slog.Logger
@@ -73,7 +80,17 @@ func (a *App) Start() error {
 			return
 		}
 
-		a.grpcServer = grpc.NewServer()
+		a.grpcServer = grpc.NewServer(
+			grpc.KeepaliveParams(keepalive.ServerParameters{
+				MaxConnectionIdle: grpcKeepaliveIdle,
+				Time:              grpcKeepaliveTime,
+				Timeout:           grpcKeepaliveTimeout,
+			}),
+			grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
+				MinTime:             grpcKeepaliveMinPingGap,
+				PermitWithoutStream: true,
+			}),
+		)
 		extprocv3.RegisterExternalProcessorServer(a.grpcServer, a.extProcServer)
 
 		a.metricsServer = &http.Server{
