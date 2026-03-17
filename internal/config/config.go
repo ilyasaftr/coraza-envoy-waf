@@ -36,6 +36,7 @@ type Config struct {
 type Profile struct {
 	Name                     string
 	Mode                     model.Mode
+	EarlyBlocking            bool
 	RequestBodyLimit         int
 	ResponseBodyLimit        int
 	ResponseBodyMIMETypes    []string
@@ -52,6 +53,7 @@ type profilesFile struct {
 
 type rawProfile struct {
 	Mode                     string     `yaml:"mode"`
+	EarlyBlocking            bool       `yaml:"early_blocking"`
 	ExcludedRuleIDs          []int      `yaml:"excluded_rule_ids"`
 	InboundAnomalyThreshold  *int       `yaml:"inbound_anomaly_score_threshold"`
 	OutboundAnomalyThreshold *int       `yaml:"outbound_anomaly_score_threshold"`
@@ -164,6 +166,7 @@ func normalizeProfile(name string, raw rawProfile) (Profile, error) {
 	return Profile{
 		Name:                     name,
 		Mode:                     mode,
+		EarlyBlocking:            raw.EarlyBlocking,
 		RequestBodyLimit:         requestBodyLimit,
 		ResponseBodyLimit:        responseBodyLimit,
 		ResponseBodyMIMETypes:    responseBodyMIMETypes,

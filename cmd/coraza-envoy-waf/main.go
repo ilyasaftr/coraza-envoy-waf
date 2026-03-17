@@ -99,6 +99,7 @@ func buildProfileRuntimes(cfg config.Config, logger *slog.Logger) (map[string]ex
 				InboundAnomalyThreshold:  profile.InboundAnomalyThreshold,
 				OutboundAnomalyThreshold: profile.OutboundAnomalyThreshold,
 				ResponseBodyMIMETypes:    profile.ResponseBodyMIMETypes,
+				EarlyBlocking:            profile.EarlyBlocking,
 			},
 			logger,
 		)

@@ -28,6 +28,7 @@ profiles:
     mode: detect
   strict:
     mode: block
+    early_blocking: true
     excluded_rule_ids: [941130]
     inbound_anomaly_score_threshold: 5
     outbound_anomaly_score_threshold: 5
@@ -44,6 +45,7 @@ Full options:
 | Field | Values | Description |
 |---|---|---|
 | `mode` | `detect` \| `block` | Detect logs interruptions; block denies with 403 |
+| `early_blocking` | `true` \| `false` | Enables CRS early blocking (`tx.early_blocking=1`) for the profile |
 | `on_error.default` | `allow` \| `deny` | Response when a processing error occurs |
 | `excluded_rule_ids` | list of ints | Rule IDs to skip |
 | `inbound_anomaly_score_threshold` | int | Anomaly score limit for requests |

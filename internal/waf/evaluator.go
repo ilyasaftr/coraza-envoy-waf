@@ -37,6 +37,7 @@ type RuntimeOptions struct {
 	InboundAnomalyThreshold  *int
 	OutboundAnomalyThreshold *int
 	ResponseBodyMIMETypes    []string
+	EarlyBlocking            bool
 }
 
 type Evaluator struct {
@@ -390,6 +391,12 @@ func buildRuntimeDirectives(options RuntimeOptions) (string, model.ThresholdInfo
 		lines = append(
 			lines,
 			fmt.Sprintf(`SecAction "id:10000002,phase:1,pass,nolog,setvar:tx.outbound_anomaly_score_threshold=%d"`, *options.OutboundAnomalyThreshold),
+		)
+	}
+	if options.EarlyBlocking {
+		lines = append(
+			lines,
+			`SecAction "id:10000003,phase:1,pass,nolog,setvar:tx.early_blocking=1"`,
 		)
 	}
 

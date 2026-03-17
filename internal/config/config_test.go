@@ -65,6 +65,7 @@ default_profile: strict
 profiles:
   strict:
     mode: block
+    early_blocking: true
     excluded_rule_ids: [942100, 941130, 942100]
     inbound_anomaly_score_threshold: 9
     outbound_anomaly_score_threshold: 7
@@ -102,6 +103,9 @@ profiles:
 	profile := cfg.Profiles["strict"]
 	if profile.Mode != model.ModeBlock {
 		t.Fatalf("unexpected mode: %q", profile.Mode)
+	}
+	if !profile.EarlyBlocking {
+		t.Fatal("expected early_blocking to be enabled")
 	}
 	if profile.RequestBodyLimit != 4096 {
 		t.Fatalf("unexpected request body limit: %d", profile.RequestBodyLimit)

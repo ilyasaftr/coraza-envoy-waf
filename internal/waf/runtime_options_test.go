@@ -84,6 +84,7 @@ func TestBuildRuntimeDirectivesCombined(t *testing.T) {
 		InboundAnomalyThreshold:  intPtr(7),
 		OutboundAnomalyThreshold: intPtr(6),
 		ResponseBodyMIMETypes:    []string{"application/json", "text/plain"},
+		EarlyBlocking:            true,
 	})
 	if err != nil {
 		t.Fatalf("build runtime directives: %v", err)
@@ -92,9 +93,20 @@ func TestBuildRuntimeDirectivesCombined(t *testing.T) {
 	assertContains(t, directives, "SecRuleRemoveById 941130")
 	assertContains(t, directives, "tx.inbound_anomaly_score_threshold=7")
 	assertContains(t, directives, "tx.outbound_anomaly_score_threshold=6")
+	assertContains(t, directives, "tx.early_blocking=1")
 	assertContains(t, directives, "SecResponseBodyMimeType application/json text/plain")
 	if inbound.Source != model.ThresholdSourceEnvOverride || outbound.Source != model.ThresholdSourceEnvOverride {
 		t.Fatalf("unexpected threshold sources: inbound=%q outbound=%q", inbound.Source, outbound.Source)
+	}
+}
+
+func TestBuildRuntimeDirectivesWithoutEarlyBlocking(t *testing.T) {
+	directives, _, _, err := buildRuntimeDirectives(RuntimeOptions{})
+	if err != nil {
+		t.Fatalf("build runtime directives: %v", err)
+	}
+	if strings.Contains(directives, "tx.early_blocking=1") {
+		t.Fatalf("did not expect early blocking directive by default, got: %s", directives)
 	}
 }
 
