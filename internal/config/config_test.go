@@ -40,6 +40,12 @@ profiles:
 	if cfg.GRPCStreamWorkers != 0 {
 		t.Fatalf("unexpected grpc stream workers: %d", cfg.GRPCStreamWorkers)
 	}
+	if cfg.GRPCMaxConcurrentStreams != 4096 {
+		t.Fatalf("unexpected grpc max concurrent streams: %d", cfg.GRPCMaxConcurrentStreams)
+	}
+	if cfg.RequestBodyFastPathMode != RequestBodyFastPathModeStrict {
+		t.Fatalf("unexpected request body fast path mode: %q", cfg.RequestBodyFastPathMode)
+	}
 	if cfg.DefaultProfile != "default" {
 		t.Fatalf("unexpected default profile: %q", cfg.DefaultProfile)
 	}
@@ -67,6 +73,8 @@ profiles:
 	t.Setenv(EnvMetricsBind, "127.0.0.1:10001")
 	t.Setenv(EnvLogLevel, "debug")
 	t.Setenv(EnvGRPCNumStreamWorkers, "4")
+	t.Setenv(EnvGRPCMaxConcurrentStreams, "2048")
+	t.Setenv(EnvRequestBodyFastPathMode, "off")
 	t.Setenv(EnvWAFProfilesPath, profilesPath)
 
 	cfg, err := Load()
@@ -84,6 +92,12 @@ profiles:
 	}
 	if cfg.GRPCStreamWorkers != 4 {
 		t.Fatalf("unexpected grpc stream workers: %d", cfg.GRPCStreamWorkers)
+	}
+	if cfg.GRPCMaxConcurrentStreams != 2048 {
+		t.Fatalf("unexpected grpc max concurrent streams: %d", cfg.GRPCMaxConcurrentStreams)
+	}
+	if cfg.RequestBodyFastPathMode != RequestBodyFastPathModeOff {
+		t.Fatalf("unexpected request body fast path mode: %q", cfg.RequestBodyFastPathMode)
 	}
 
 	profile := cfg.Profiles["strict"]
@@ -165,6 +179,40 @@ profiles:
 	t.Setenv(EnvGRPCNumStreamWorkers, "-1")
 	if _, err := Load(); err == nil {
 		t.Fatal("expected invalid grpc num stream workers error")
+	}
+}
+
+func TestLoadInvalidGRPCMaxConcurrentStreamsFails(t *testing.T) {
+	profilesPath := writeProfilesFile(t, `
+default_profile: strict
+profiles:
+  strict:
+    directives: |
+      SecRuleEngine On
+`)
+	t.Setenv(EnvWAFProfilesPath, profilesPath)
+	t.Setenv(EnvGRPCMaxConcurrentStreams, "-1")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected invalid grpc max concurrent streams error")
+	}
+}
+
+func TestLoadInvalidRequestBodyFastPathModeFallsBackToStrict(t *testing.T) {
+	profilesPath := writeProfilesFile(t, `
+default_profile: strict
+profiles:
+  strict:
+    directives: |
+      SecRuleEngine On
+`)
+	t.Setenv(EnvWAFProfilesPath, profilesPath)
+	t.Setenv(EnvRequestBodyFastPathMode, "relaxed")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("expected invalid request body fast path mode to fallback to strict, got %v", err)
+	}
+	if cfg.RequestBodyFastPathMode != RequestBodyFastPathModeStrict {
+		t.Fatalf("expected request body fast path mode strict fallback, got %q", cfg.RequestBodyFastPathMode)
 	}
 }
 

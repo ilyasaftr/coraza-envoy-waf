@@ -48,7 +48,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	extProcService, err := extproc.NewService(runtimes, cfg.DefaultProfile, recorder, logger)
+	extProcService, err := extproc.NewService(
+		runtimes,
+		cfg.DefaultProfile,
+		string(cfg.RequestBodyFastPathMode),
+		recorder,
+		logger,
+	)
 	if err != nil {
 		logger.Error("failed to initialize ext_proc service", "error", err)
 		os.Exit(1)
@@ -65,6 +71,7 @@ func main() {
 		cfg.GRPCBind,
 		cfg.MetricsBind,
 		cfg.GRPCStreamWorkers,
+		cfg.GRPCMaxConcurrentStreams,
 		extProcService,
 		mux,
 		logger,
@@ -80,6 +87,8 @@ func main() {
 		"grpc_bind", app.GRPCAddr(),
 		"metrics_bind", app.MetricsAddr(),
 		"grpc_num_stream_workers", cfg.GRPCStreamWorkers,
+		"grpc_max_concurrent_streams", cfg.GRPCMaxConcurrentStreams,
+		"request_body_fast_path_mode", cfg.RequestBodyFastPathMode,
 		"default_profile", cfg.DefaultProfile,
 		"profiles", sortedProfileNames(runtimes),
 		"profiles_path", cfg.ProfilesPath,

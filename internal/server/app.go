@@ -21,7 +21,7 @@ const (
 	grpcKeepaliveTime       = 2 * time.Minute
 	grpcKeepaliveTimeout    = 20 * time.Second
 	grpcKeepaliveMinPingGap = 30 * time.Second
-	grpcMaxStreams          = 4096
+	defaultMaxStreams       = 4096
 )
 
 type App struct {
@@ -30,6 +30,7 @@ type App struct {
 	grpcBind          string
 	metricsBind       string
 	streamWorkerCount uint32
+	maxStreams        uint32
 
 	extProcServer extprocv3.ExternalProcessorServer
 	httpHandler   http.Handler
@@ -49,6 +50,7 @@ func New(
 	grpcBind string,
 	metricsBind string,
 	streamWorkerCount uint32,
+	maxStreams uint32,
 	extProcServer extprocv3.ExternalProcessorServer,
 	httpHandler http.Handler,
 	logger *slog.Logger,
@@ -62,6 +64,7 @@ func New(
 		grpcBind:          grpcBind,
 		metricsBind:       metricsBind,
 		streamWorkerCount: streamWorkerCount,
+		maxStreams:        effectiveMaxStreams(maxStreams),
 		extProcServer:     extProcServer,
 		httpHandler:       httpHandler,
 		errCh:             make(chan error, 2),
@@ -95,7 +98,7 @@ func (a *App) Start() error {
 				MinTime:             grpcKeepaliveMinPingGap,
 				PermitWithoutStream: true,
 			}),
-			grpc.MaxConcurrentStreams(grpcMaxStreams),
+			grpc.MaxConcurrentStreams(a.maxStreams),
 			grpc.NumStreamWorkers(effectiveStreamWorkerCount(a.streamWorkerCount)),
 		}
 		a.grpcServer = grpc.NewServer(options...)
@@ -186,4 +189,11 @@ func effectiveStreamWorkerCount(configured uint32) uint32 {
 		return 1
 	}
 	return uint32(count)
+}
+
+func effectiveMaxStreams(configured uint32) uint32 {
+	if configured > 0 {
+		return configured
+	}
+	return defaultMaxStreams
 }

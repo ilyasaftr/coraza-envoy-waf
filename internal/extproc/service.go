@@ -25,17 +25,12 @@ type streamState = pipeline.StreamState
 
 const requestBodyFastPathReason = "bodyless_safe_method"
 
-var suspiciousCarrierPatterns = [...]string{
-	"<script",
-	"%3cscript",
-	"javascript:",
-	"onerror=",
-	"onload=",
-	"union select",
-	"../",
-	"%2e%2e",
-	"select%20",
-}
+type requestBodyFastPathMode string
+
+const (
+	requestBodyFastPathModeStrict requestBodyFastPathMode = "strict"
+	requestBodyFastPathModeOff    requestBodyFastPathMode = "off"
+)
 
 type Service struct {
 	extprocv3.UnimplementedExternalProcessorServer
@@ -44,18 +39,29 @@ type Service struct {
 	resolver       *profilemeta.Resolver
 	recorder       model.Recorder
 	logger         *slog.Logger
+	fastPathMode   requestBodyFastPathMode
 }
 
 func NewProfileRuntime(name string, evaluator *waf.Evaluator) (ProfileRuntime, error) {
 	return extprocruntime.NewProfileRuntime(name, evaluator)
 }
 
-func NewService(profiles map[string]ProfileRuntime, defaultProfile string, recorder model.Recorder, logger *slog.Logger) (*Service, error) {
+func NewService(
+	profiles map[string]ProfileRuntime,
+	defaultProfile string,
+	fastPathMode string,
+	recorder model.Recorder,
+	logger *slog.Logger,
+) (*Service, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	if recorder == nil {
 		recorder = noopRecorder{}
+	}
+	normalizedFastPathMode, err := normalizeRequestBodyFastPathMode(fastPathMode)
+	if err != nil {
+		return nil, err
 	}
 
 	normalizedProfiles, normalizedDefault, err := extprocruntime.NormalizeProfiles(profiles, defaultProfile)
@@ -69,6 +75,7 @@ func NewService(profiles map[string]ProfileRuntime, defaultProfile string, recor
 		resolver:       profilemeta.NewResolver(normalizedProfiles, normalizedDefault, logger),
 		recorder:       recorder,
 		logger:         logger,
+		fastPathMode:   normalizedFastPathMode,
 	}, nil
 }
 
@@ -136,7 +143,7 @@ func (s *Service) handleMessage(state *streamState, msg *extprocv3.ProcessingReq
 		// Envoy can send request headers with end_of_stream=true for bodyless requests.
 		// We still need to run request-body finalization so phase-2 logic executes.
 		if req.RequestHeaders.GetEndOfStream() {
-			if shouldUseRequestBodyFastPath(state.Request()) {
+			if shouldUseRequestBodyFastPath(state.Request(), s.fastPathMode) {
 				state.MarkRequestBodyFastPath(requestBodyFastPathReason)
 				return resolved, protoio.ResponseForAction(model.ActionRequestHeaders, resolved)
 			}
@@ -216,12 +223,16 @@ func shouldIgnoreRecvError(err error, state *streamState) bool {
 	return state.FinalResult().Decision != model.DecisionError
 }
 
-func shouldUseRequestBodyFastPath(req model.Request) bool {
+func shouldUseRequestBodyFastPath(req model.Request, mode requestBodyFastPathMode) bool {
+	if mode != requestBodyFastPathModeStrict {
+		return false
+	}
+
 	if !isBodylessSafeMethod(req.Method) {
 		return false
 	}
 
-	if strings.TrimSpace(req.Query) != "" || hasSuspiciousCarrier(req.Path) {
+	if strings.TrimSpace(req.Query) != "" {
 		return false
 	}
 
@@ -239,9 +250,6 @@ func shouldUseRequestBodyFastPath(req model.Request) bool {
 				contentLengthZero = false
 			}
 		}
-		if hasSuspiciousCarrier(value) {
-			return false
-		}
 	}
 
 	return contentLengthZero
@@ -256,15 +264,13 @@ func isBodylessSafeMethod(method string) bool {
 	}
 }
 
-func hasSuspiciousCarrier(value string) bool {
-	lower := strings.ToLower(strings.TrimSpace(value))
-	if lower == "" {
-		return false
+func normalizeRequestBodyFastPathMode(raw string) (requestBodyFastPathMode, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", string(requestBodyFastPathModeStrict):
+		return requestBodyFastPathModeStrict, nil
+	case string(requestBodyFastPathModeOff):
+		return requestBodyFastPathModeOff, nil
+	default:
+		return requestBodyFastPathModeStrict, nil
 	}
-	for _, pattern := range suspiciousCarrierPatterns {
-		if strings.Contains(lower, pattern) {
-			return true
-		}
-	}
-	return false
 }

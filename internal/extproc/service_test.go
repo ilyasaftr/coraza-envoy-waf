@@ -166,7 +166,7 @@ func TestRequestHeadersEndOfStreamSkipsRequestBodyForBodylessSafeRequest(t *test
 	}
 }
 
-func TestRequestHeadersEndOfStreamTriggersRequestBodyPhaseOnSuspiciousRequest(t *testing.T) {
+func TestRequestHeadersEndOfStreamTriggersRequestBodyPhaseWhenQueryIsPresent(t *testing.T) {
 	stub := &stubSession{
 		requestHeadersResult: model.Result{Decision: model.DecisionAllow},
 		requestBodyResult: model.Result{
@@ -195,7 +195,33 @@ func TestRequestHeadersEndOfStreamTriggersRequestBodyPhaseOnSuspiciousRequest(t 
 		t.Fatalf("expected request_body outcome, got %+v", outcomes)
 	}
 	if outcomes[1].FastPathReason != "" {
-		t.Fatalf("did not expect fast path reason for suspicious request, got %q", outcomes[1].FastPathReason)
+		t.Fatalf("did not expect fast path reason when query is present, got %q", outcomes[1].FastPathReason)
+	}
+}
+
+func TestRequestHeadersEndOfStreamOffModeAlwaysFinalizesRequestBody(t *testing.T) {
+	stub := &stubSession{
+		requestHeadersResult: model.Result{Decision: model.DecisionAllow},
+		requestBodyResult: model.Result{
+			Decision:       model.DecisionDeny,
+			HTTPStatusCode: 403,
+			RuleID:         "949110",
+		},
+	}
+	service := newStubServiceWithFastPathMode(t, map[string]ProfileRuntime{
+		"strict": newStubRuntime("strict", stub, model.ThresholdInfo{}, model.ThresholdInfo{}),
+	}, "strict", string(requestBodyFastPathModeOff))
+
+	state := service.newStreamState()
+	result, resp := service.handleMessage(state, requestHeadersMessageWithEndOfStream("/ok", nil, true))
+	if result.Decision != model.DecisionDeny {
+		t.Fatalf("expected deny decision, got %q", result.Decision)
+	}
+	if resp.GetImmediateResponse() == nil {
+		t.Fatal("expected immediate deny response")
+	}
+	if stub.requestBodyCalls != 1 {
+		t.Fatalf("expected request body to be processed once, got %d", stub.requestBodyCalls)
 	}
 }
 
@@ -637,8 +663,34 @@ func TestShouldUseRequestBodyFastPath(t *testing.T) {
 				{Key: "content-length", Value: "0"},
 			},
 		}
-		if !shouldUseRequestBodyFastPath(req) {
+		if !shouldUseRequestBodyFastPath(req, requestBodyFastPathModeStrict) {
 			t.Fatal("expected fast path for safe bodyless GET")
+		}
+	})
+
+	t.Run("safe bodyless HEAD", func(t *testing.T) {
+		req := model.Request{
+			Method: "HEAD",
+			Path:   "/ok",
+			Headers: []model.Header{
+				{Key: "content-length", Value: "0"},
+			},
+		}
+		if !shouldUseRequestBodyFastPath(req, requestBodyFastPathModeStrict) {
+			t.Fatal("expected fast path for safe bodyless HEAD")
+		}
+	})
+
+	t.Run("safe bodyless OPTIONS", func(t *testing.T) {
+		req := model.Request{
+			Method: "OPTIONS",
+			Path:   "/ok",
+			Headers: []model.Header{
+				{Key: "content-length", Value: "0"},
+			},
+		}
+		if !shouldUseRequestBodyFastPath(req, requestBodyFastPathModeStrict) {
+			t.Fatal("expected fast path for safe bodyless OPTIONS")
 		}
 	})
 
@@ -646,10 +698,33 @@ func TestShouldUseRequestBodyFastPath(t *testing.T) {
 		req := model.Request{
 			Method: "GET",
 			Path:   "/ok",
-			Query:  "q=%3Cscript%3Ealert(1)%3C/script%3E",
+			Query:  "page=1",
 		}
-		if shouldUseRequestBodyFastPath(req) {
+		if shouldUseRequestBodyFastPath(req, requestBodyFastPathModeStrict) {
 			t.Fatal("expected query payload to disable fast path")
+		}
+	})
+
+	t.Run("transfer-encoding disables fast path", func(t *testing.T) {
+		req := model.Request{
+			Method: "GET",
+			Path:   "/ok",
+			Headers: []model.Header{
+				{Key: "transfer-encoding", Value: "chunked"},
+			},
+		}
+		if shouldUseRequestBodyFastPath(req, requestBodyFastPathModeStrict) {
+			t.Fatal("expected transfer-encoding to disable fast path")
+		}
+	})
+
+	t.Run("off mode never fast paths", func(t *testing.T) {
+		req := model.Request{
+			Method: "GET",
+			Path:   "/ok",
+		}
+		if shouldUseRequestBodyFastPath(req, requestBodyFastPathModeOff) {
+			t.Fatal("expected off mode to disable fast path")
 		}
 	})
 
@@ -661,10 +736,23 @@ func TestShouldUseRequestBodyFastPath(t *testing.T) {
 				{Key: "content-length", Value: "15"},
 			},
 		}
-		if shouldUseRequestBodyFastPath(req) {
+		if shouldUseRequestBodyFastPath(req, requestBodyFastPathModeStrict) {
 			t.Fatal("expected content-length body to disable fast path")
 		}
 	})
+}
+
+func TestNewServiceInvalidFastPathModeFallsBackToStrict(t *testing.T) {
+	profiles := map[string]ProfileRuntime{
+		"strict": newStubRuntime("strict", &stubSession{}, model.ThresholdInfo{}, model.ThresholdInfo{}),
+	}
+	service, err := NewService(profiles, "strict", "invalid", noopRecorder{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatalf("expected invalid fast path mode to fallback to strict, got %v", err)
+	}
+	if service.fastPathMode != requestBodyFastPathModeStrict {
+		t.Fatalf("expected fast path mode strict fallback, got %q", service.fastPathMode)
+	}
 }
 
 func requestHeadersMessage(path string, attributes map[string]*structpb.Struct) *extprocv3.ProcessingRequest {
@@ -878,7 +966,12 @@ func newStubRuntime(
 
 func newEvaluatorService(t *testing.T, profiles map[string]ProfileRuntime, defaultProfile string) *Service {
 	t.Helper()
-	service, err := NewService(profiles, defaultProfile, noopRecorder{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	return newEvaluatorServiceWithFastPathMode(t, profiles, defaultProfile, string(requestBodyFastPathModeStrict))
+}
+
+func newEvaluatorServiceWithFastPathMode(t *testing.T, profiles map[string]ProfileRuntime, defaultProfile string, fastPathMode string) *Service {
+	t.Helper()
+	service, err := NewService(profiles, defaultProfile, fastPathMode, noopRecorder{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatalf("new service: %v", err)
 	}
@@ -887,7 +980,12 @@ func newEvaluatorService(t *testing.T, profiles map[string]ProfileRuntime, defau
 
 func newStubService(t *testing.T, profiles map[string]ProfileRuntime, defaultProfile string) *Service {
 	t.Helper()
-	service, err := NewService(profiles, defaultProfile, noopRecorder{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	return newStubServiceWithFastPathMode(t, profiles, defaultProfile, string(requestBodyFastPathModeStrict))
+}
+
+func newStubServiceWithFastPathMode(t *testing.T, profiles map[string]ProfileRuntime, defaultProfile string, fastPathMode string) *Service {
+	t.Helper()
+	service, err := NewService(profiles, defaultProfile, fastPathMode, noopRecorder{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatalf("new service: %v", err)
 	}

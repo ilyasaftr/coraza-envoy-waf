@@ -11,26 +11,38 @@ import (
 )
 
 const (
-	defaultGRPCBind = ":9002"
-	defaultHTTPBind = ":9090"
+	defaultGRPCBind                 = ":9002"
+	defaultHTTPBind                 = ":9090"
+	defaultGRPCMaxConcurrentStreams = 4096
 )
 
 const (
-	EnvGRPCBind             = "GRPC_BIND"
-	EnvMetricsBind          = "METRICS_BIND"
-	EnvLogLevel             = "LOG_LEVEL"
-	EnvGRPCNumStreamWorkers = "GRPC_NUM_STREAM_WORKERS"
-	EnvWAFProfilesPath      = "WAF_PROFILES_PATH"
+	EnvGRPCBind                 = "GRPC_BIND"
+	EnvMetricsBind              = "METRICS_BIND"
+	EnvLogLevel                 = "LOG_LEVEL"
+	EnvGRPCNumStreamWorkers     = "GRPC_NUM_STREAM_WORKERS"
+	EnvGRPCMaxConcurrentStreams = "GRPC_MAX_CONCURRENT_STREAMS"
+	EnvRequestBodyFastPathMode  = "REQUEST_BODY_FAST_PATH_MODE"
+	EnvWAFProfilesPath          = "WAF_PROFILES_PATH"
+)
+
+type RequestBodyFastPathMode string
+
+const (
+	RequestBodyFastPathModeStrict RequestBodyFastPathMode = "strict"
+	RequestBodyFastPathModeOff    RequestBodyFastPathMode = "off"
 )
 
 type Config struct {
-	GRPCBind          string
-	MetricsBind       string
-	LogLevel          slog.Level
-	GRPCStreamWorkers uint32
-	ProfilesPath      string
-	DefaultProfile    string
-	Profiles          map[string]Profile
+	GRPCBind                 string
+	MetricsBind              string
+	LogLevel                 slog.Level
+	GRPCStreamWorkers        uint32
+	GRPCMaxConcurrentStreams uint32
+	RequestBodyFastPathMode  RequestBodyFastPathMode
+	ProfilesPath             string
+	DefaultProfile           string
+	Profiles                 map[string]Profile
 }
 
 type Profile struct {
@@ -52,12 +64,22 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	maxConcurrentStreams, err := parseNonNegativeIntEnvWithDefault(EnvGRPCMaxConcurrentStreams, defaultGRPCMaxConcurrentStreams)
+	if err != nil {
+		return Config{}, err
+	}
+	fastPathMode, err := parseRequestBodyFastPathMode(envOrDefault(EnvRequestBodyFastPathMode, string(RequestBodyFastPathModeStrict)))
+	if err != nil {
+		return Config{}, err
+	}
 	cfg := Config{
-		GRPCBind:          envOrDefault(EnvGRPCBind, defaultGRPCBind),
-		MetricsBind:       envOrDefault(EnvMetricsBind, defaultHTTPBind),
-		LogLevel:          parseLevel(envOrDefault(EnvLogLevel, "INFO")),
-		GRPCStreamWorkers: uint32(streamWorkers),
-		ProfilesPath:      strings.TrimSpace(os.Getenv(EnvWAFProfilesPath)),
+		GRPCBind:                 envOrDefault(EnvGRPCBind, defaultGRPCBind),
+		MetricsBind:              envOrDefault(EnvMetricsBind, defaultHTTPBind),
+		LogLevel:                 parseLevel(envOrDefault(EnvLogLevel, "INFO")),
+		GRPCStreamWorkers:        uint32(streamWorkers),
+		GRPCMaxConcurrentStreams: uint32(maxConcurrentStreams),
+		RequestBodyFastPathMode:  fastPathMode,
+		ProfilesPath:             strings.TrimSpace(os.Getenv(EnvWAFProfilesPath)),
 	}
 	if cfg.ProfilesPath == "" {
 		return cfg, fmt.Errorf("%s is required", EnvWAFProfilesPath)
@@ -149,4 +171,30 @@ func parseNonNegativeIntEnv(name string) (int, error) {
 		return 0, fmt.Errorf("%s must be a non-negative integer", name)
 	}
 	return value, nil
+}
+
+func parseNonNegativeIntEnvWithDefault(name string, fallback int) (int, error) {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return fallback, nil
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, fmt.Errorf("%s must be a non-negative integer", name)
+	}
+	if value < 0 {
+		return 0, fmt.Errorf("%s must be a non-negative integer", name)
+	}
+	return value, nil
+}
+
+func parseRequestBodyFastPathMode(raw string) (RequestBodyFastPathMode, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case string(RequestBodyFastPathModeStrict):
+		return RequestBodyFastPathModeStrict, nil
+	case string(RequestBodyFastPathModeOff):
+		return RequestBodyFastPathModeOff, nil
+	default:
+		return RequestBodyFastPathModeStrict, nil
+	}
 }

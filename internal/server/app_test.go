@@ -35,6 +35,7 @@ func TestAppStartsAndServesHealthAndGrpc(t *testing.T) {
 		"127.0.0.1:0",
 		"127.0.0.1:0",
 		0,
+		0,
 		allowExtProcServer{},
 		mux,
 		logger,
@@ -93,5 +94,17 @@ func TestEffectiveStreamWorkerCountAutoFromGOMAXPROCS(t *testing.T) {
 	}
 	if got := effectiveStreamWorkerCount(0); got != expected {
 		t.Fatalf("expected auto stream worker count %d, got %d", expected, got)
+	}
+}
+
+func TestEffectiveMaxStreamsUsesConfiguredValue(t *testing.T) {
+	if got := effectiveMaxStreams(2048); got != 2048 {
+		t.Fatalf("expected configured max streams 2048, got %d", got)
+	}
+}
+
+func TestEffectiveMaxStreamsFallsBackToDefault(t *testing.T) {
+	if got := effectiveMaxStreams(0); got != defaultMaxStreams {
+		t.Fatalf("expected default max streams %d, got %d", defaultMaxStreams, got)
 	}
 }
