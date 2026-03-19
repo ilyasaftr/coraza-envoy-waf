@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"strings"
 
 	extprocv3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	"github.com/ilyasaftr/coraza-envoy-waf/internal/extproc/observe"
@@ -21,6 +22,20 @@ import (
 type Session = extprocruntime.Session
 type ProfileRuntime = extprocruntime.ProfileRuntime
 type streamState = pipeline.StreamState
+
+const requestBodyFastPathReason = "bodyless_safe_method"
+
+var suspiciousCarrierPatterns = [...]string{
+	"<script",
+	"%3cscript",
+	"javascript:",
+	"onerror=",
+	"onload=",
+	"union select",
+	"../",
+	"%2e%2e",
+	"select%20",
+}
 
 type Service struct {
 	extprocv3.UnimplementedExternalProcessorServer
@@ -121,6 +136,10 @@ func (s *Service) handleMessage(state *streamState, msg *extprocv3.ProcessingReq
 		// Envoy can send request headers with end_of_stream=true for bodyless requests.
 		// We still need to run request-body finalization so phase-2 logic executes.
 		if req.RequestHeaders.GetEndOfStream() {
+			if shouldUseRequestBodyFastPath(state.Request()) {
+				state.MarkRequestBodyFastPath(requestBodyFastPathReason)
+				return resolved, protoio.ResponseForAction(model.ActionRequestHeaders, resolved)
+			}
 			bodyResult, _ := state.EnsureRequestBodyFinalized()
 			bodyResolved := state.FinalizeAction(model.ActionRequestBody, bodyResult)
 			return bodyResolved, protoio.ResponseForAction(model.ActionRequestHeaders, bodyResolved)
@@ -195,4 +214,57 @@ func shouldIgnoreRecvError(err error, state *streamState) bool {
 		return false
 	}
 	return state.FinalResult().Decision != model.DecisionError
+}
+
+func shouldUseRequestBodyFastPath(req model.Request) bool {
+	if !isBodylessSafeMethod(req.Method) {
+		return false
+	}
+
+	if strings.TrimSpace(req.Query) != "" || hasSuspiciousCarrier(req.Path) {
+		return false
+	}
+
+	contentLengthZero := true
+	for _, header := range req.Headers {
+		key := strings.TrimSpace(strings.ToLower(header.Key))
+		value := strings.TrimSpace(header.Value)
+		switch key {
+		case "content-length":
+			if value != "" && value != "0" {
+				contentLengthZero = false
+			}
+		case "transfer-encoding":
+			if value != "" {
+				contentLengthZero = false
+			}
+		}
+		if hasSuspiciousCarrier(value) {
+			return false
+		}
+	}
+
+	return contentLengthZero
+}
+
+func isBodylessSafeMethod(method string) bool {
+	switch strings.ToUpper(strings.TrimSpace(method)) {
+	case "GET", "HEAD", "OPTIONS":
+		return true
+	default:
+		return false
+	}
+}
+
+func hasSuspiciousCarrier(value string) bool {
+	lower := strings.ToLower(strings.TrimSpace(value))
+	if lower == "" {
+		return false
+	}
+	for _, pattern := range suspiciousCarrierPatterns {
+		if strings.Contains(lower, pattern) {
+			return true
+		}
+	}
+	return false
 }

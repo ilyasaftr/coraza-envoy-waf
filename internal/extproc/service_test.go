@@ -133,7 +133,7 @@ func TestHandleMessageAllowsBenignTraffic(t *testing.T) {
 	}
 }
 
-func TestRequestHeadersEndOfStreamTriggersRequestBodyPhase(t *testing.T) {
+func TestRequestHeadersEndOfStreamSkipsRequestBodyForBodylessSafeRequest(t *testing.T) {
 	stub := &stubSession{
 		requestHeadersResult: model.Result{Decision: model.DecisionAllow},
 		requestBodyResult: model.Result{
@@ -148,6 +148,39 @@ func TestRequestHeadersEndOfStreamTriggersRequestBodyPhase(t *testing.T) {
 
 	state := service.newStreamState()
 	result, resp := service.handleMessage(state, requestHeadersMessageWithEndOfStream("/ok", nil, true))
+	if result.Decision != model.DecisionAllow {
+		t.Fatalf("expected allow decision, got %q", result.Decision)
+	}
+	if resp.GetRequestHeaders() == nil {
+		t.Fatal("expected request headers continue response")
+	}
+	if stub.requestBodyCalls != 0 {
+		t.Fatalf("expected request body fast path to skip session request body call, got %d", stub.requestBodyCalls)
+	}
+	outcomes := state.Outcomes()
+	if len(outcomes) < 2 || outcomes[1].Action != model.ActionRequestBody {
+		t.Fatalf("expected request_body outcome, got %+v", outcomes)
+	}
+	if outcomes[1].FastPathReason != requestBodyFastPathReason {
+		t.Fatalf("expected fast path reason %q, got %q", requestBodyFastPathReason, outcomes[1].FastPathReason)
+	}
+}
+
+func TestRequestHeadersEndOfStreamTriggersRequestBodyPhaseOnSuspiciousRequest(t *testing.T) {
+	stub := &stubSession{
+		requestHeadersResult: model.Result{Decision: model.DecisionAllow},
+		requestBodyResult: model.Result{
+			Decision:       model.DecisionDeny,
+			HTTPStatusCode: 403,
+			RuleID:         "949110",
+		},
+	}
+	service := newStubService(t, map[string]ProfileRuntime{
+		"strict": newStubRuntime("strict", stub, model.ThresholdInfo{}, model.ThresholdInfo{}),
+	}, "strict")
+
+	state := service.newStreamState()
+	result, resp := service.handleMessage(state, requestHeadersMessageWithEndOfStream("/ok?q=%3Cscript%3Ealert(1)%3C/script%3E", nil, true))
 	if result.Decision != model.DecisionDeny {
 		t.Fatalf("expected deny decision, got %q", result.Decision)
 	}
@@ -160,6 +193,9 @@ func TestRequestHeadersEndOfStreamTriggersRequestBodyPhase(t *testing.T) {
 	outcomes := state.Outcomes()
 	if len(outcomes) < 2 || outcomes[1].Action != model.ActionRequestBody {
 		t.Fatalf("expected request_body outcome, got %+v", outcomes)
+	}
+	if outcomes[1].FastPathReason != "" {
+		t.Fatalf("did not expect fast path reason for suspicious request, got %q", outcomes[1].FastPathReason)
 	}
 }
 
@@ -588,6 +624,45 @@ func TestInternalActionErrorsFailOpen(t *testing.T) {
 		}
 		if resp.GetResponseBody() == nil {
 			t.Fatal("expected continue response body response")
+		}
+	})
+}
+
+func TestShouldUseRequestBodyFastPath(t *testing.T) {
+	t.Run("safe bodyless GET", func(t *testing.T) {
+		req := model.Request{
+			Method: "GET",
+			Path:   "/ok",
+			Headers: []model.Header{
+				{Key: "content-length", Value: "0"},
+			},
+		}
+		if !shouldUseRequestBodyFastPath(req) {
+			t.Fatal("expected fast path for safe bodyless GET")
+		}
+	})
+
+	t.Run("query payload disables fast path", func(t *testing.T) {
+		req := model.Request{
+			Method: "GET",
+			Path:   "/ok",
+			Query:  "q=%3Cscript%3Ealert(1)%3C/script%3E",
+		}
+		if shouldUseRequestBodyFastPath(req) {
+			t.Fatal("expected query payload to disable fast path")
+		}
+	})
+
+	t.Run("content length body disables fast path", func(t *testing.T) {
+		req := model.Request{
+			Method: "GET",
+			Path:   "/ok",
+			Headers: []model.Header{
+				{Key: "content-length", Value: "15"},
+			},
+		}
+		if shouldUseRequestBodyFastPath(req) {
+			t.Fatal("expected content-length body to disable fast path")
 		}
 	})
 }

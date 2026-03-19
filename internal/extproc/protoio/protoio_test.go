@@ -87,3 +87,26 @@ func TestParseRequestHeaders(t *testing.T) {
 		t.Fatalf("expected first client ip 1.1.1.1, got %q", request.ClientIP)
 	}
 }
+
+func TestParseRequestHeadersNormalizesUppercaseKeys(t *testing.T) {
+	request := ParseRequestHeaders(&extprocv3.HttpHeaders{
+		Headers: &corev3.HeaderMap{
+			Headers: []*corev3.HeaderValue{
+				{Key: ":METHOD", RawValue: []byte("GET")},
+				{Key: ":PATH", RawValue: []byte("/")},
+				{Key: "X-REQUEST-ID", RawValue: []byte("rid-uppercase")},
+				{Key: "CONTENT-TYPE", RawValue: []byte("application/json")},
+			},
+		},
+	})
+
+	if request.ID != "rid-uppercase" {
+		t.Fatalf("expected request id rid-uppercase, got %q", request.ID)
+	}
+	if len(request.Headers) != 1 {
+		t.Fatalf("expected one passthrough header, got %d", len(request.Headers))
+	}
+	if got := request.Headers[0].Key; got != "content-type" {
+		t.Fatalf("expected content-type header key, got %q", got)
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"runtime"
 	"sync"
 	"time"
 
@@ -20,6 +21,7 @@ const (
 	grpcKeepaliveTime       = 2 * time.Minute
 	grpcKeepaliveTimeout    = 20 * time.Second
 	grpcKeepaliveMinPingGap = 30 * time.Second
+	grpcMaxStreams          = 4096
 )
 
 type App struct {
@@ -93,9 +95,8 @@ func (a *App) Start() error {
 				MinTime:             grpcKeepaliveMinPingGap,
 				PermitWithoutStream: true,
 			}),
-		}
-		if a.streamWorkerCount > 0 {
-			options = append(options, grpc.NumStreamWorkers(a.streamWorkerCount))
+			grpc.MaxConcurrentStreams(grpcMaxStreams),
+			grpc.NumStreamWorkers(effectiveStreamWorkerCount(a.streamWorkerCount)),
 		}
 		a.grpcServer = grpc.NewServer(options...)
 		extprocv3.RegisterExternalProcessorServer(a.grpcServer, a.extProcServer)
@@ -174,4 +175,15 @@ func (a *App) MetricsAddr() string {
 		return ""
 	}
 	return a.metricsListener.Addr().String()
+}
+
+func effectiveStreamWorkerCount(configured uint32) uint32 {
+	if configured > 0 {
+		return configured
+	}
+	count := runtime.GOMAXPROCS(0)
+	if count <= 0 {
+		return 1
+	}
+	return uint32(count)
 }

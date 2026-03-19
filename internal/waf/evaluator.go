@@ -146,7 +146,7 @@ func (e *Evaluator) NewSession(req model.Request) *Session {
 		tx.AddRequestHeader("host", req.Host)
 	}
 	for _, header := range req.Headers {
-		tx.AddRequestHeader(strings.ToLower(header.Key), header.Value)
+		tx.AddRequestHeader(header.Key, header.Value)
 	}
 
 	if req.Query != "" {
@@ -208,7 +208,7 @@ func (s *Session) ProcessResponseHeaders(statusCode int, protocol string, header
 		return model.Result{Decision: model.DecisionAllow}
 	}
 	for _, header := range headers {
-		s.tx.AddResponseHeader(strings.ToLower(header.Key), header.Value)
+		s.tx.AddResponseHeader(header.Key, header.Value)
 	}
 	if protocol == "" {
 		protocol = s.req.Protocol

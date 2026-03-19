@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"runtime"
 	"testing"
 	"time"
 
@@ -77,4 +78,20 @@ func TestAppStartsAndServesHealthAndGrpc(t *testing.T) {
 		t.Fatalf("grpc dial failed: %v", err)
 	}
 	_ = conn.Close()
+}
+
+func TestEffectiveStreamWorkerCountUsesConfiguredValue(t *testing.T) {
+	if got := effectiveStreamWorkerCount(7); got != 7 {
+		t.Fatalf("expected configured stream worker count 7, got %d", got)
+	}
+}
+
+func TestEffectiveStreamWorkerCountAutoFromGOMAXPROCS(t *testing.T) {
+	expected := uint32(runtime.GOMAXPROCS(0))
+	if expected == 0 {
+		expected = 1
+	}
+	if got := effectiveStreamWorkerCount(0); got != expected {
+		t.Fatalf("expected auto stream worker count %d, got %d", expected, got)
+	}
 }

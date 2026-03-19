@@ -43,6 +43,9 @@ func LogFinalResult(
 		if item.Error != "" {
 			entry["error"] = item.Error
 		}
+		if item.FastPathReason != "" {
+			entry["fast_path_reason"] = item.FastPathReason
+		}
 		if item.AnomalyScore != nil {
 			entry["anomaly_score"] = *item.AnomalyScore
 		}

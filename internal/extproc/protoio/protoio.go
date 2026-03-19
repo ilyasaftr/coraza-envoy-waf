@@ -60,7 +60,7 @@ func ParseRequestHeaders(httpHeaders *extprocv3.HttpHeaders) model.Request {
 func ParseResponseHeaders(httpHeaders *extprocv3.HttpHeaders) (int, string, []model.Header) {
 	statusCode := 200
 	protocol := "HTTP/1.1"
-	headers := []model.Header{}
+	var headers []model.Header
 	if httpHeaders == nil || httpHeaders.GetHeaders() == nil {
 		return statusCode, protocol, headers
 	}
@@ -224,7 +224,7 @@ func headerKeyValue(header *corev3.HeaderValue) (string, string) {
 	if value == "" && len(header.GetRawValue()) > 0 {
 		value = string(header.GetRawValue())
 	}
-	return strings.ToLower(header.GetKey()), value
+	return lowerASCIIIfNeeded(header.GetKey()), value
 }
 
 func splitPathAndQuery(rawPath string) (string, string) {
@@ -272,4 +272,21 @@ func httpStatusCode(code int) typev3.StatusCode {
 	default:
 		return typev3.StatusCode_InternalServerError
 	}
+}
+
+func lowerASCIIIfNeeded(value string) string {
+	for i := 0; i < len(value); i++ {
+		c := value[i]
+		if c >= 'A' && c <= 'Z' {
+			buf := make([]byte, len(value))
+			copy(buf, value)
+			for j := i; j < len(buf); j++ {
+				if buf[j] >= 'A' && buf[j] <= 'Z' {
+					buf[j] += 'a' - 'A'
+				}
+			}
+			return string(buf)
+		}
+	}
+	return value
 }

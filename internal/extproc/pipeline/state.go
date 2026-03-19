@@ -15,6 +15,7 @@ type ActionOutcome struct {
 	Interrupted     bool
 	RuleID          string
 	Error           string
+	FastPathReason  string
 	AnomalyScore    *int
 	Threshold       *int
 	ThresholdSource model.ThresholdSource
@@ -167,6 +168,27 @@ func (s *StreamState) EnsureRequestBodyFinalized() (model.Result, bool) {
 		return model.Result{Decision: model.DecisionAllow}, false
 	}
 	return s.ProcessRequestBody(nil, true), true
+}
+
+func (s *StreamState) MarkRequestBodyFastPath(reason string) {
+	if s.requestBodyDone {
+		return
+	}
+	s.requestBodyDone = true
+	threshold := s.profile.ThresholdForAction(model.ActionRequestBody)
+
+	outcome := ActionOutcome{
+		Action:          model.ActionRequestBody,
+		Decision:        model.DecisionAllow,
+		FastPathReason:  reason,
+		ThresholdSource: threshold.Source,
+	}
+	if threshold.Value != nil {
+		value := *threshold.Value
+		outcome.Threshold = &value
+	}
+
+	s.outcomes = append(s.outcomes, outcome)
 }
 
 func (s *StreamState) ProcessResponseHeaders(statusCode int, protocol string, headers []model.Header) model.Result {

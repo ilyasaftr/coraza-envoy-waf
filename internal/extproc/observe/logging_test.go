@@ -176,6 +176,47 @@ func TestLogFinalResultErrorOutcome(t *testing.T) {
 	}
 }
 
+func TestLogFinalResultIncludesFastPathReason(t *testing.T) {
+	handler := &captureHandler{minLevel: slog.LevelDebug}
+	logger := slog.New(handler)
+
+	LogFinalResult(
+		logger,
+		model.Request{
+			ID:     "req-fast-path",
+			Host:   "podinfo.klawu.com",
+			Path:   "/",
+			Method: "GET",
+		},
+		"default",
+		model.Result{
+			Decision: model.DecisionAllow,
+		},
+		[]pipeline.ActionOutcome{
+			{
+				Action:          model.ActionRequestHeaders,
+				Decision:        model.DecisionAllow,
+				ThresholdSource: model.ThresholdSourceUnknown,
+			},
+			{
+				Action:          model.ActionRequestBody,
+				Decision:        model.DecisionAllow,
+				FastPathReason:  "bodyless_safe_method",
+				ThresholdSource: model.ThresholdSourceUnknown,
+			},
+		},
+	)
+
+	entry := handler.last()
+	actionResults, ok := entry.attrs["action_results"].([]map[string]any)
+	if !ok || len(actionResults) != 2 {
+		t.Fatalf("expected two action results, got %#v", entry.attrs["action_results"])
+	}
+	if got := actionResults[1]["fast_path_reason"]; got != "bodyless_safe_method" {
+		t.Fatalf("expected fast_path_reason bodyless_safe_method, got %#v", got)
+	}
+}
+
 type capturedLog struct {
 	message string
 	level   slog.Level

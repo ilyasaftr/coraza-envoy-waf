@@ -83,6 +83,26 @@ func TestEnsureRequestBodyFinalizedRunsOnce(t *testing.T) {
 	}
 }
 
+func TestMarkRequestBodyFastPathMarksRequestComplete(t *testing.T) {
+	state := newState()
+	state.MarkRequestBodyFastPath("bodyless_safe_method")
+
+	if !state.RequestComplete() {
+		t.Fatal("expected request body to be marked as complete")
+	}
+
+	outcomes := state.Outcomes()
+	if len(outcomes) != 1 {
+		t.Fatalf("expected one outcome, got %d", len(outcomes))
+	}
+	if outcomes[0].Action != model.ActionRequestBody {
+		t.Fatalf("expected request_body outcome, got %q", outcomes[0].Action)
+	}
+	if outcomes[0].FastPathReason != "bodyless_safe_method" {
+		t.Fatalf("expected fast path reason bodyless_safe_method, got %q", outcomes[0].FastPathReason)
+	}
+}
+
 func newState() *StreamState {
 	return NewStreamState("default", runtime.ProfileRuntime{
 		Name: "default",
