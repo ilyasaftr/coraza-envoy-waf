@@ -83,3 +83,58 @@ Notes:
 - If you include `@coraza.conf-recommended`, remember it sets `SecRuleEngine DetectionOnly` unless a later directive overrides it.
 - Service-internal action errors are hardcoded fail-open. They remain visible in structured logs but no longer have a configurable `on_error` policy.
 - Threshold logging derives values from raw directives (`threshold_source=profile_directive`) and falls back to embedded CRS defaults (`threshold_source=crs_default`) when no override is present.
+
+## Envoy Gateway `processingMode` Alignment
+
+`coraza-envoy-waf` only inspects the phases Envoy sends through `ext_proc`, so `EnvoyExtensionPolicy.spec.extProc[].processingMode` must match the Coraza directives in your active profile.
+
+Important:
+
+- Envoy Gateway `v1.7.x` does not support `body: None`. To disable body forwarding, omit the `body` field entirely.
+- If you rely on route-based profile selection, keep `request.attributes` with `xds.route_name` and `xds.route_metadata`.
+
+| Coraza profile intent | Envoy `processingMode` | Required Coraza directives | Notes |
+|---|---|---|---|
+| Request headers only | `request` block present, no `request.body` | none beyond normal rules | Request headers are sent when the `request` block exists. Keep `request.attributes` if you use route metadata. |
+| Request body inspection | `request.body: Buffered` | `SecRequestBodyAccess On` | Use `Buffered` for deterministic CRS body inspection and body-limit enforcement. |
+| Response headers only | `response` block present, no `response.body` | none beyond normal rules | Add a `response` block only when you actually want response-phase processing. |
+| Response body inspection | `response.body: Buffered` | `SecResponseBodyAccess On` | If responses are JSON, also set `SecResponseBodyMimeType ... application/json` or Coraza will ignore the body. |
+| No body inspection | omit `request.body` and omit `response.body` | `SecRequestBodyAccess Off`, `SecResponseBodyAccess Off` | This avoids extra gRPC/body buffering overhead for bodies Coraza will not inspect. |
+
+Examples:
+
+Request headers plus route metadata only:
+
+```yaml
+processingMode:
+  request:
+    attributes:
+      - xds.route_name
+      - xds.route_metadata
+```
+
+Request body inspection enabled:
+
+```yaml
+processingMode:
+  request:
+    attributes:
+      - xds.route_name
+      - xds.route_metadata
+    body: Buffered
+```
+
+Request and response body inspection enabled:
+
+```yaml
+processingMode:
+  request:
+    attributes:
+      - xds.route_name
+      - xds.route_metadata
+    body: Buffered
+  response:
+    body: Buffered
+```
+
+Current `k3s-learn` strict profile keeps both `SecRequestBodyAccess Off` and `SecResponseBodyAccess Off`, so the matching `EnvoyExtensionPolicy` should omit both body fields.
