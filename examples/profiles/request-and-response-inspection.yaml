@@ -1,0 +1,17 @@
+default_profile: strict
+profiles:
+  strict:
+    directives: |
+      Include @coraza.conf-recommended
+      SecRuleEngine On
+      SecRequestBodyAccess On
+      SecRequestBodyLimit 4096
+      SecRequestBodyInMemoryLimit 4096
+      SecRequestBodyLimitAction Reject
+      SecResponseBodyAccess On
+      SecResponseBodyLimit 4096
+      SecResponseBodyLimitAction Reject
+      SecResponseBodyMimeType text/plain text/html text/xml application/json
+      Include @crs-setup.conf.example
+      Include @owasp_crs/*.conf
+

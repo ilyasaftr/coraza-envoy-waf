@@ -1,140 +1,124 @@
 # Coraza Envoy WAF
 
-A gRPC `ext_proc` service that inspects HTTP requests and responses using [Coraza](https://github.com/corazawaf/coraza) + OWASP CRS, designed for use with Envoy Gateway.
+`coraza-envoy-waf` is a gRPC `ext_proc` service for [Envoy Gateway](https://gateway.envoyproxy.io/) that runs [Coraza](https://github.com/corazawaf/coraza) with the OWASP Core Rule Set.
 
-## Features
+It is designed for operators who want to attach WAF inspection to Gateway API routes without using Proxy-WASM.
 
-- Full request and response inspection (headers + body)
-- Coraza-native engine modes via `SecRuleEngine On|DetectionOnly|Off`
-- Service-internal action errors are hardcoded fail-open and still logged
-- Prometheus metrics and health endpoint
-- No Proxy-WASM required
+## What It Does
 
-## Performance Build
+- Inspects HTTP traffic with Coraza + OWASP CRS
+- Works with Envoy Gateway through `EnvoyExtensionPolicy`
+- Uses `profiles.yaml` to define WAF behavior
+- Exposes `/healthz` and `/metrics`
+- Supports request and response inspection when Envoy forwards those phases
 
-- Default Docker/CI builds now use CGO with `memoize_builders,coraza.rule.no_regex_multiline,re2_cgo,libinjection_cgo`.
-- The service contract stays the same for `ext_proc` decisions, deny headers/details, and profile resolution.
-- Before promoting a perf image, run the contract checks and confirm the deny envelope still matches current behavior:
-  - Ensure native deps are installed (`re2` + `libinjection`) or run inside the project CI workflow.
-  - `go test -tags "memoize_builders,coraza.rule.no_regex_multiline,re2_cgo,libinjection_cgo" ./...`
-  - `go test ./internal/extproc/... ./internal/waf/...`
-- Roll back by pinning the previous image digest instead of reusing a mutable tag:
-  - `CORAZA_EXT_PROC_IMAGE=ghcr.io/<org>/coraza-envoy-waf@sha256:<previous_digest> make apply-global`
+## When To Use It
+
+Use this service when you want:
+
+- route-level WAF policy in Envoy Gateway
+- Coraza profiles managed as plain YAML
+- Prometheus-friendly health and metrics
+- a separate WAF service instead of an in-proxy filter
+
+## Quick Start
+
+The service needs a `profiles.yaml` file and listens on:
+
+- gRPC: `:9002`
+- metrics and health: `:9090`
+
+Minimal startup example:
+
+```bash
+docker run --rm \
+  -p 9002:9002 \
+  -p 9090:9090 \
+  -v "$PWD/examples/profiles/strict-minimal.yaml:/etc/coraza/profiles.yaml:ro" \
+  -e WAF_PROFILES_PATH=/etc/coraza/profiles.yaml \
+  ghcr.io/ilyasaftr/coraza-envoy-waf:latest
+```
+
+Example files:
+
+- Profiles: [`examples/profiles/`](examples/profiles/)
+- Envoy Gateway manifests: [`examples/envoy-gateway/`](examples/envoy-gateway/)
 
 ## Configuration
 
 | Variable | Default | Description |
 |---|---|---|
-| `WAF_PROFILES_PATH` | — | Path to `profiles.yaml` (required) |
-| `GRPC_BIND` | `:9002` | gRPC bind address |
-| `METRICS_BIND` | `:9090` | HTTP bind for `/healthz` and `/metrics` |
-| `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
-| `GRPC_NUM_STREAM_WORKERS` | `0` | grpc-go stream worker count; `0` disables the experimental worker pool |
+| `WAF_PROFILES_PATH` | — | Path to `profiles.yaml`. Required. |
+| `GRPC_BIND` | `:9002` | Address for the ext-proc gRPC server. |
+| `METRICS_BIND` | `:9090` | Address for `/healthz` and `/metrics`. |
+| `LOG_LEVEL` | `info` | Log level: `debug`, `info`, `warn`, `error`. |
+| `GRPC_NUM_STREAM_WORKERS` | `0` | Optional grpc-go stream worker count. `0` keeps it disabled. |
+| `GRPC_MAX_CONCURRENT_STREAMS` | `4096` | Maximum concurrent gRPC streams accepted by the server. |
+| `REQUEST_BODY_FAST_PATH_MODE` | `strict` | Request fast-path mode for safe bodyless traffic. `strict` or `off`. |
 
-## profiles.yaml
+## Profiles
 
-```yaml
-default_profile: default
-profiles:
-  default:
-    directives: |
-      Include @coraza.conf-recommended
-      SecRuleEngine DetectionOnly
-      SecRequestBodyAccess On
-      SecRequestBodyLimit 1048576
-      SecRequestBodyLimitAction Reject
-      SecResponseBodyAccess On
-      SecResponseBodyLimit 1048576
-      SecResponseBodyLimitAction Reject
-      Include @crs-setup.conf.example
-      SecAction "id:10000001,phase:1,pass,nolog,t:none,setvar:tx.blocking_paranoia_level=1"
-      SecAction "id:10000002,phase:1,pass,nolog,t:none,setvar:tx.inbound_anomaly_score_threshold=10"
-      SecAction "id:10000003,phase:1,pass,nolog,t:none,setvar:tx.outbound_anomaly_score_threshold=8"
-      Include @owasp_crs/*.conf
-      SecRuleRemoveById 941130
-  strict:
-    directives: |
-      Include @coraza.conf-recommended
-      SecRuleEngine On
-      SecRequestBodyAccess On
-      SecRequestBodyLimit 1048576
-      SecRequestBodyLimitAction Reject
-      SecResponseBodyAccess On
-      SecResponseBodyLimit 1048576
-      SecResponseBodyLimitAction Reject
-      SecResponseBodyMimeType text/plain text/html text/xml application/json
-      Include @crs-setup.conf.example
-      SecAction "id:10000101,phase:1,pass,nolog,t:none,setvar:tx.blocking_paranoia_level=1"
-      SecAction "id:10000102,phase:1,pass,nolog,t:none,setvar:tx.inbound_anomaly_score_threshold=5"
-      SecAction "id:10000103,phase:1,pass,nolog,t:none,setvar:tx.outbound_anomaly_score_threshold=4"
-      SecAction "id:10000104,phase:1,pass,nolog,t:none,setvar:tx.early_blocking=1"
-      Include @owasp_crs/*.conf
-```
+`profiles.yaml` is the source of WAF behavior. Each profile contains raw Coraza directives.
 
-Profile contract:
+At minimum, a profile usually defines:
 
-| Field | Values | Description |
-|---|---|---|
-| `directives` | multiline Coraza directives | Required. Effective engine behavior is whatever Coraza resolves from these directives and any included files. |
+- `SecRuleEngine`
+- request and response body access
+- CRS setup includes
+- optional thresholds, exclusions, MIME types, and custom rules
 
-Notes:
+Sample files:
 
-- `profiles.yaml` is now the only WAF configuration source. Thresholds, exclusions, paranoia, body limits, MIME handling, early blocking, and custom rules all live inside `directives`.
-- If you include `@coraza.conf-recommended`, remember it sets `SecRuleEngine DetectionOnly` unless a later directive overrides it.
-- Service-internal action errors are hardcoded fail-open. They remain visible in structured logs but no longer have a configurable `on_error` policy.
-- Threshold logging derives values from raw directives (`threshold_source=profile_directive`) and falls back to embedded CRS defaults (`threshold_source=crs_default`) when no override is present.
+- [`examples/profiles/detect-minimal.yaml`](examples/profiles/detect-minimal.yaml)
+- [`examples/profiles/strict-minimal.yaml`](examples/profiles/strict-minimal.yaml)
+- [`examples/profiles/request-and-response-inspection.yaml`](examples/profiles/request-and-response-inspection.yaml)
 
-## Envoy Gateway `processingMode` Alignment
+Operational notes:
 
-`coraza-envoy-waf` only inspects the phases Envoy sends through `ext_proc`, so `EnvoyExtensionPolicy.spec.extProc[].processingMode` must match the Coraza directives in your active profile.
+- `profiles.yaml` is loaded at startup
+- route-based profile selection depends on request attributes such as `xds.route_name` and `xds.route_metadata`
+- service-internal processing errors are fail-open and remain visible in logs
+
+## Envoy Gateway Integration
+
+Envoy Gateway must forward the phases that Coraza should inspect. If Envoy does not send a phase, `coraza-envoy-waf` cannot inspect it.
 
 Important:
 
-- Envoy Gateway `v1.7.x` does not support `body: None`. To disable body forwarding, omit the `body` field entirely.
-- If you rely on route-based profile selection, keep `request.attributes` with `xds.route_name` and `xds.route_metadata`.
+- Envoy Gateway `v1.7.x` does not support `body: None`
+- To disable body forwarding, omit the `body` field entirely
+- If you use route-based profile selection, include:
+  - `xds.route_name`
+  - `xds.route_metadata`
 
-| Coraza profile intent | Envoy `processingMode` | Required Coraza directives | Notes |
-|---|---|---|---|
-| Request headers only | `request` block present, no `request.body` | none beyond normal rules | Request headers are sent when the `request` block exists. Keep `request.attributes` if you use route metadata. |
-| Request body inspection | `request.body: Buffered` | `SecRequestBodyAccess On` | Use `Buffered` for deterministic CRS body inspection and body-limit enforcement. |
-| Response headers only | `response` block present, no `response.body` | none beyond normal rules | Add a `response` block only when you actually want response-phase processing. |
-| Response body inspection | `response.body: Buffered` | `SecResponseBodyAccess On` | If responses are JSON, also set `SecResponseBodyMimeType ... application/json` or Coraza will ignore the body. |
-| No body inspection | omit `request.body` and omit `response.body` | `SecRequestBodyAccess Off`, `SecResponseBodyAccess Off` | This avoids extra gRPC/body buffering overhead for bodies Coraza will not inspect. |
+Decision table:
 
-Examples:
+| If your Coraza profile does this | Use this in `processingMode` |
+|---|---|
+| Request headers only | Keep a `request` block and omit `request.body` |
+| Request body inspection | Set `request.body: Buffered` |
+| Response headers only | Keep a `response` block and omit `response.body` |
+| Response body inspection | Set `response.body: Buffered` |
+| No request body inspection | Omit `request.body` |
+| No response body inspection | Omit `response.body` |
 
-Request headers plus route metadata only:
+If you want JSON response inspection, your profile must also include `application/json` in `SecResponseBodyMimeType`.
 
-```yaml
-processingMode:
-  request:
-    attributes:
-      - xds.route_name
-      - xds.route_metadata
-```
+Full examples:
 
-Request body inspection enabled:
+- [`examples/envoy-gateway/envoyextensionpolicy-request-only.yaml`](examples/envoy-gateway/envoyextensionpolicy-request-only.yaml)
+- [`examples/envoy-gateway/envoyextensionpolicy-request-and-response.yaml`](examples/envoy-gateway/envoyextensionpolicy-request-and-response.yaml)
+- [`examples/envoy-gateway/README.md`](examples/envoy-gateway/README.md)
 
-```yaml
-processingMode:
-  request:
-    attributes:
-      - xds.route_name
-      - xds.route_metadata
-    body: Buffered
-```
+## Observability
 
-Request and response body inspection enabled:
+The service exposes:
 
-```yaml
-processingMode:
-  request:
-    attributes:
-      - xds.route_name
-      - xds.route_metadata
-    body: Buffered
-  response:
-    body: Buffered
-```
+- `/healthz` for readiness and liveness checks
+- `/metrics` for Prometheus scraping
 
-Current `k3s-learn` strict profile keeps both `SecRequestBodyAccess Off` and `SecResponseBodyAccess Off`, so the matching `EnvoyExtensionPolicy` should omit both body fields.
+The metrics endpoint is intended for service health and traffic visibility. Logs are structured and useful for deny events, profile selection, and troubleshooting.
+
+## Build Note
+
+The published image uses the repository Dockerfile and the default performance-oriented build path. For custom image builds, use the included [`Dockerfile`](Dockerfile) or the GitHub Actions workflows in [`.github/workflows/`](.github/workflows/).

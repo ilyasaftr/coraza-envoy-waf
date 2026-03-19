@@ -1,0 +1,30 @@
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyExtensionPolicy
+metadata:
+  name: app-waf-request-and-response
+  namespace: demo
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: my-app
+  extProc:
+    - backendRefs:
+        - group: ""
+          kind: Service
+          name: coraza-ext-proc
+          namespace: gateway-system
+          port: 9002
+      failOpen: true
+      messageTimeout: 200ms
+      metadata:
+        accessibleNamespaces:
+          - envoy-gateway
+      processingMode:
+        request:
+          attributes:
+            - xds.route_name
+            - xds.route_metadata
+          body: Buffered
+        response:
+          body: Buffered

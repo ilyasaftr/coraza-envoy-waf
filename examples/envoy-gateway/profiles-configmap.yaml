@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: coraza-ext-proc-profiles
+  namespace: gateway-system
+data:
+  profiles.yaml: |
+    default_profile: strict
+    profiles:
+      strict:
+        directives: |
+          Include @coraza.conf-recommended
+          SecRuleEngine On
+          SecRequestBodyAccess Off
+          SecResponseBodyAccess Off
+          Include @crs-setup.conf.example
+          Include @owasp_crs/*.conf
+

@@ -1,0 +1,11 @@
+default_profile: strict
+profiles:
+  strict:
+    directives: |
+      Include @coraza.conf-recommended
+      SecRuleEngine On
+      SecRequestBodyAccess Off
+      SecResponseBodyAccess Off
+      Include @crs-setup.conf.example
+      Include @owasp_crs/*.conf
+
