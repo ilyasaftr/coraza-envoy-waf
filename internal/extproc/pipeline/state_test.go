@@ -28,6 +28,17 @@ func TestFinalizeActionHardcodedFailOpenContinues(t *testing.T) {
 	}
 }
 
+func TestNewStreamStatePreallocatesOutcomes(t *testing.T) {
+	state := newState()
+	outcomes := state.Outcomes()
+	if len(outcomes) != 0 {
+		t.Fatalf("expected outcomes length 0, got %d", len(outcomes))
+	}
+	if cap(outcomes) != defaultActionOutcomesCapacity {
+		t.Fatalf("expected outcomes capacity %d, got %d", defaultActionOutcomesCapacity, cap(outcomes))
+	}
+}
+
 func TestFinalizeActionUnknownKeepsError(t *testing.T) {
 	state := newState()
 

@@ -8,6 +8,8 @@ import (
 	"github.com/ilyasaftr/coraza-envoy-waf/internal/model"
 )
 
+const defaultActionOutcomesCapacity = 4
+
 type ActionOutcome struct {
 	Action          model.ProcessingAction
 	Decision        model.Decision
@@ -44,6 +46,7 @@ func NewStreamState(defaultProfileName string, defaultProfile runtime.ProfileRun
 		},
 		profileName: defaultProfileName,
 		profile:     defaultProfile,
+		outcomes:    make([]ActionOutcome, 0, defaultActionOutcomesCapacity),
 	}
 }
 
