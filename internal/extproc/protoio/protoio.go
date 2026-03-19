@@ -105,9 +105,9 @@ func ContinueTrailersResponse(isRequest bool) *extprocv3.ProcessingResponse {
 	}
 }
 
-func ResponseForAction(action model.ProcessingAction, engineMode model.EngineMode, result model.Result) *extprocv3.ProcessingResponse {
+func ResponseForAction(action model.ProcessingAction, result model.Result) *extprocv3.ProcessingResponse {
 	if shouldDeny(result) {
-		return ImmediateDenyResponse(engineMode, result)
+		return ImmediateDenyResponse(result)
 	}
 
 	switch action {
@@ -142,11 +142,11 @@ func ResponseForAction(action model.ProcessingAction, engineMode model.EngineMod
 			Body:           "internal authorization error",
 			Err:            errors.New("unknown processing action"),
 		}
-		return ImmediateDenyResponse(engineMode, unknown)
+		return ImmediateDenyResponse(unknown)
 	}
 }
 
-func ImmediateDenyResponse(engineMode model.EngineMode, result model.Result) *extprocv3.ProcessingResponse {
+func ImmediateDenyResponse(result model.Result) *extprocv3.ProcessingResponse {
 	statusCode := result.HTTPStatusCode
 	if statusCode <= 0 {
 		if result.Decision == model.DecisionError {
@@ -182,12 +182,6 @@ func ImmediateDenyResponse(engineMode model.EngineMode, result model.Result) *ex
 				Body: []byte(body),
 				Headers: &extprocv3.HeaderMutation{
 					SetHeaders: []*corev3.HeaderValueOption{
-						{
-							Header: &corev3.HeaderValue{
-								Key:      "x-waf-mode",
-								RawValue: []byte(engineMode),
-							},
-						},
 						{
 							Header: &corev3.HeaderValue{
 								Key:      "x-waf-rule-id",

@@ -63,10 +63,6 @@ func (s *StreamState) ProfileName() string {
 	return s.profileName
 }
 
-func (s *StreamState) EngineMode() model.EngineMode {
-	return s.profile.EngineMode
-}
-
 func (s *StreamState) Outcomes() []ActionOutcome {
 	return s.outcomes
 }

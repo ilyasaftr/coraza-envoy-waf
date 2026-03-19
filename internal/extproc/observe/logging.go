@@ -12,7 +12,6 @@ func LogFinalResult(
 	logger *slog.Logger,
 	request model.Request,
 	profileName string,
-	engineMode model.EngineMode,
 	finalResult model.Result,
 	outcomes []pipeline.ActionOutcome,
 ) {
@@ -59,7 +58,6 @@ func LogFinalResult(
 		"host", request.Host,
 		"path", request.Path,
 		"method", request.Method,
-		"mode", engineMode,
 		"final_decision", finalResult.Decision,
 		"action_results", actionResults,
 	}

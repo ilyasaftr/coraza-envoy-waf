@@ -6,8 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/ilyasaftr/coraza-envoy-waf/internal/model"
 )
 
 func TestLoadDefaultsFromProfilesYAML(t *testing.T) {
@@ -47,15 +45,12 @@ profiles:
 	}
 
 	profile := cfg.Profiles["default"]
-	if profile.EngineMode != model.EngineModeBlock {
-		t.Fatalf("unexpected mode: %q", profile.EngineMode)
-	}
 	if !strings.Contains(profile.Directives, "SecRuleEngine On") {
 		t.Fatalf("expected directives to be preserved, got: %s", profile.Directives)
 	}
 }
 
-func TestLoadCustomDirectivesDeriveDetectionOnlyMode(t *testing.T) {
+func TestLoadCustomDirectivesPreservesRawProfile(t *testing.T) {
 	profilesPath := writeProfilesFile(t, `
 default_profile: strict
 profiles:
@@ -92,8 +87,8 @@ profiles:
 	}
 
 	profile := cfg.Profiles["strict"]
-	if profile.EngineMode != model.EngineModeDetect {
-		t.Fatalf("unexpected mode: %q", profile.EngineMode)
+	if !strings.Contains(profile.Directives, "SecRuleEngine DetectionOnly") {
+		t.Fatalf("expected directives to be preserved, got: %s", profile.Directives)
 	}
 }
 
@@ -143,7 +138,7 @@ profiles:
 	}
 }
 
-func TestLoadMissingSecRuleEngineFails(t *testing.T) {
+func TestLoadAllowsProfilesWithoutExplicitSecRuleEngine(t *testing.T) {
 	profilesPath := writeProfilesFile(t, `
 default_profile: strict
 profiles:
@@ -153,37 +148,8 @@ profiles:
       Include @owasp_crs/*.conf
 `)
 	t.Setenv(EnvWAFProfilesPath, profilesPath)
-	if _, err := Load(); err == nil {
-		t.Fatal("expected missing SecRuleEngine error")
-	}
-}
-
-func TestLoadMultipleSecRuleEngineFails(t *testing.T) {
-	profilesPath := writeProfilesFile(t, `
-default_profile: strict
-profiles:
-  strict:
-    directives: |
-      SecRuleEngine DetectionOnly
-      SecRuleEngine On
-`)
-	t.Setenv(EnvWAFProfilesPath, profilesPath)
-	if _, err := Load(); err == nil {
-		t.Fatal("expected duplicate SecRuleEngine error")
-	}
-}
-
-func TestLoadInvalidSecRuleEngineFails(t *testing.T) {
-	profilesPath := writeProfilesFile(t, `
-default_profile: strict
-profiles:
-  strict:
-    directives: |
-      SecRuleEngine Aggressive
-`)
-	t.Setenv(EnvWAFProfilesPath, profilesPath)
-	if _, err := Load(); err == nil {
-		t.Fatal("expected invalid SecRuleEngine error")
+	if _, err := Load(); err != nil {
+		t.Fatalf("expected config to load without explicit SecRuleEngine, got %v", err)
 	}
 }
 

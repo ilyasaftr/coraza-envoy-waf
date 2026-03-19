@@ -10,7 +10,7 @@ import (
 )
 
 func TestImmediateDenyResponseUsesWAFHeaders(t *testing.T) {
-	resp := ImmediateDenyResponse(model.EngineModeBlock, model.Result{
+	resp := ImmediateDenyResponse(model.Result{
 		Decision:       model.DecisionDeny,
 		HTTPStatusCode: 403,
 		Interruption: &model.Interruption{
@@ -33,8 +33,8 @@ func TestImmediateDenyResponseUsesWAFHeaders(t *testing.T) {
 		headers[header.GetHeader().GetKey()] = string(header.GetHeader().GetRawValue())
 	}
 
-	if got := headers["x-waf-mode"]; got != string(model.EngineModeBlock) {
-		t.Fatalf("expected x-waf-mode=block, got %q", got)
+	if _, ok := headers["x-waf-mode"]; ok {
+		t.Fatalf("did not expect x-waf-mode header, got %#v", headers)
 	}
 	if got := headers["x-waf-rule-id"]; got != "942100" {
 		t.Fatalf("expected x-waf-rule-id=942100, got %q", got)
@@ -42,7 +42,7 @@ func TestImmediateDenyResponseUsesWAFHeaders(t *testing.T) {
 }
 
 func TestResponseForUnknownActionReturnsInternalError(t *testing.T) {
-	resp := ResponseForAction(model.ActionUnknown, model.EngineModeBlock, model.Result{
+	resp := ResponseForAction(model.ActionUnknown, model.Result{
 		Decision: model.DecisionAllow,
 	})
 	immediate := resp.GetImmediateResponse()

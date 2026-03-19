@@ -19,19 +19,17 @@ type Session interface {
 
 type ProfileRuntime struct {
 	Name               string
-	EngineMode         model.EngineMode
 	NewSession         func(req model.Request) Session
 	ThresholdForAction func(action model.ProcessingAction) model.ThresholdInfo
 }
 
-func NewProfileRuntime(name string, evaluator *waf.Evaluator, engineMode model.EngineMode) (ProfileRuntime, error) {
+func NewProfileRuntime(name string, evaluator *waf.Evaluator) (ProfileRuntime, error) {
 	if evaluator == nil {
 		return ProfileRuntime{}, errors.New("evaluator is required")
 	}
 
 	runtime := ProfileRuntime{
-		Name:       strings.TrimSpace(name),
-		EngineMode: NormalizeEngineMode(engineMode),
+		Name: strings.TrimSpace(name),
 		NewSession: func(req model.Request) Session {
 			return evaluator.NewSession(req)
 		},
@@ -64,7 +62,6 @@ func NormalizeProfiles(profiles map[string]ProfileRuntime, defaultProfile string
 		if runtime.Name == "" {
 			runtime.Name = profileName
 		}
-		runtime.EngineMode = NormalizeEngineMode(runtime.EngineMode)
 		if runtime.ThresholdForAction == nil {
 			runtime.ThresholdForAction = func(model.ProcessingAction) model.ThresholdInfo {
 				return model.ThresholdInfo{Source: model.ThresholdSourceUnknown}
@@ -78,17 +75,4 @@ func NormalizeProfiles(profiles map[string]ProfileRuntime, defaultProfile string
 	}
 
 	return normalized, defaultName, nil
-}
-
-func NormalizeEngineMode(mode model.EngineMode) model.EngineMode {
-	switch mode {
-	case model.EngineModeDetect:
-		return model.EngineModeDetect
-	case model.EngineModeBlock:
-		return model.EngineModeBlock
-	case model.EngineModeOff:
-		return model.EngineModeOff
-	default:
-		return model.EngineModeBlock
-	}
 }

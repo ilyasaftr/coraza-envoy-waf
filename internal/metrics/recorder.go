@@ -7,7 +7,7 @@ import (
 
 type PrometheusRecorder struct {
 	requests      *prometheus.CounterVec
-	interruptions *prometheus.CounterVec
+	interruptions prometheus.Counter
 	failures      prometheus.Counter
 }
 
@@ -16,16 +16,15 @@ func NewPrometheusRecorder(registerer prometheus.Registerer) (*PrometheusRecorde
 		requests: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "coraza_ext_proc_requests_total",
-				Help: "Total ext_proc requests by mode and decision.",
+				Help: "Total ext_proc requests by decision.",
 			},
-			[]string{"mode", "decision"},
+			[]string{"decision"},
 		),
-		interruptions: prometheus.NewCounterVec(
+		interruptions: prometheus.NewCounter(
 			prometheus.CounterOpts{
 				Name: "coraza_ext_proc_interruptions_total",
-				Help: "Total Coraza interruptions by mode.",
+				Help: "Total Coraza interruptions.",
 			},
-			[]string{"mode"},
 		),
 		failures: prometheus.NewCounter(
 			prometheus.CounterOpts{
@@ -48,20 +47,15 @@ func NewPrometheusRecorder(registerer prometheus.Registerer) (*PrometheusRecorde
 	return recorder, nil
 }
 
-func (r *PrometheusRecorder) Record(_ model.Request, engineMode model.EngineMode, result model.Result) {
-	mode := string(engineMode)
-	if mode == "" {
-		mode = string(model.EngineModeDetect)
-	}
-
+func (r *PrometheusRecorder) Record(_ model.Request, result model.Result) {
 	decision := string(result.Decision)
 	if decision == "" {
 		decision = string(model.DecisionAllow)
 	}
-	r.requests.WithLabelValues(mode, decision).Inc()
+	r.requests.WithLabelValues(decision).Inc()
 
 	if result.Interruption != nil {
-		r.interruptions.WithLabelValues(mode).Inc()
+		r.interruptions.Inc()
 	}
 
 	if result.Decision == model.DecisionError || result.Err != nil {
@@ -71,4 +65,4 @@ func (r *PrometheusRecorder) Record(_ model.Request, engineMode model.EngineMode
 
 type NoopRecorder struct{}
 
-func (NoopRecorder) Record(_ model.Request, _ model.EngineMode, _ model.Result) {}
+func (NoopRecorder) Record(_ model.Request, _ model.Result) {}

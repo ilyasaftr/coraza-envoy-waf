@@ -5,7 +5,6 @@ import (
 	"errors"
 	"io"
 	"log/slog"
-	"strings"
 	"testing"
 
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
@@ -38,7 +37,7 @@ SecRule RESPONSE_BODY "@contains blocked-response" "id:202,phase:4,deny,status:4
 
 func TestHandleMessageBlocksOnRequestHeaders(t *testing.T) {
 	service := newEvaluatorService(t, map[string]ProfileRuntime{
-		"strict": newEvaluatorRuntime(t, "strict", model.EngineModeBlock),
+		"strict": newEvaluatorRuntime(t, "strict", blockTestDirectives),
 	}, "strict")
 
 	state := service.newStreamState()
@@ -53,7 +52,7 @@ func TestHandleMessageBlocksOnRequestHeaders(t *testing.T) {
 
 func TestImmediateDenyHeadersUseWAFPrefix(t *testing.T) {
 	service := newEvaluatorService(t, map[string]ProfileRuntime{
-		"strict": newEvaluatorRuntime(t, "strict", model.EngineModeBlock),
+		"strict": newEvaluatorRuntime(t, "strict", blockTestDirectives),
 	}, "strict")
 
 	state := service.newStreamState()
@@ -72,9 +71,6 @@ func TestImmediateDenyHeadersUseWAFPrefix(t *testing.T) {
 		headers[option.GetHeader().GetKey()] = string(option.GetHeader().GetRawValue())
 	}
 
-	if got := headers["x-waf-mode"]; got != string(model.EngineModeBlock) {
-		t.Fatalf("expected x-waf-mode=%q, got %q", model.EngineModeBlock, got)
-	}
 	if got := headers["x-waf-rule-id"]; got == "" {
 		t.Fatal("expected x-waf-rule-id to be set")
 	}
@@ -82,7 +78,7 @@ func TestImmediateDenyHeadersUseWAFPrefix(t *testing.T) {
 
 func TestHandleMessageBlocksOnResponseBody(t *testing.T) {
 	service := newEvaluatorService(t, map[string]ProfileRuntime{
-		"strict": newEvaluatorRuntime(t, "strict", model.EngineModeBlock),
+		"strict": newEvaluatorRuntime(t, "strict", blockTestDirectives),
 	}, "strict")
 
 	state := service.newStreamState()
@@ -124,7 +120,7 @@ func TestHandleMessageBlocksOnResponseBody(t *testing.T) {
 
 func TestHandleMessageAllowsBenignTraffic(t *testing.T) {
 	service := newEvaluatorService(t, map[string]ProfileRuntime{
-		"strict": newEvaluatorRuntime(t, "strict", model.EngineModeBlock),
+		"strict": newEvaluatorRuntime(t, "strict", blockTestDirectives),
 	}, "strict")
 
 	state := service.newStreamState()
@@ -147,7 +143,7 @@ func TestRequestHeadersEndOfStreamTriggersRequestBodyPhase(t *testing.T) {
 		},
 	}
 	service := newStubService(t, map[string]ProfileRuntime{
-		"strict": newStubRuntime("strict", model.EngineModeBlock, stub, model.ThresholdInfo{}, model.ThresholdInfo{}),
+		"strict": newStubRuntime("strict", stub, model.ThresholdInfo{}, model.ThresholdInfo{}),
 	}, "strict")
 
 	state := service.newStreamState()
@@ -178,7 +174,7 @@ func TestResponseHeadersFinalizeRequestBodyWhenMissingRequestBodyMessage(t *test
 		responseHeadersResult: model.Result{Decision: model.DecisionAllow},
 	}
 	service := newStubService(t, map[string]ProfileRuntime{
-		"strict": newStubRuntime("strict", model.EngineModeBlock, stub, model.ThresholdInfo{}, model.ThresholdInfo{}),
+		"strict": newStubRuntime("strict", stub, model.ThresholdInfo{}, model.ThresholdInfo{}),
 	}, "strict")
 
 	state := service.newStreamState()
@@ -211,7 +207,7 @@ func TestResponseHeadersFinalizeRequestBodyWhenMissingRequestBodyMessage(t *test
 
 func TestProcessIgnoresCanceledAfterSuccessfulResult(t *testing.T) {
 	service := newEvaluatorService(t, map[string]ProfileRuntime{
-		"strict": newEvaluatorRuntime(t, "strict", model.EngineModeBlock),
+		"strict": newEvaluatorRuntime(t, "strict", blockTestDirectives),
 	}, "strict")
 	recorder := &capturingRecorder{}
 	service.recorder = recorder
@@ -258,7 +254,7 @@ func TestProcessIgnoresCanceledAfterSuccessfulResult(t *testing.T) {
 
 func TestProcessIgnoresCanceledAfterSuccessfulRequestOnlyResult(t *testing.T) {
 	service := newEvaluatorService(t, map[string]ProfileRuntime{
-		"strict": newEvaluatorRuntime(t, "strict", model.EngineModeBlock),
+		"strict": newEvaluatorRuntime(t, "strict", blockTestDirectives),
 	}, "strict")
 	recorder := &capturingRecorder{}
 	service.recorder = recorder
@@ -281,7 +277,7 @@ func TestProcessIgnoresCanceledAfterSuccessfulRequestOnlyResult(t *testing.T) {
 
 func TestProcessIgnoresCanceledAfterSuccessfulResponseHeadersOnlyResult(t *testing.T) {
 	service := newEvaluatorService(t, map[string]ProfileRuntime{
-		"strict": newEvaluatorRuntime(t, "strict", model.EngineModeBlock),
+		"strict": newEvaluatorRuntime(t, "strict", blockTestDirectives),
 	}, "strict")
 	recorder := &capturingRecorder{}
 	service.recorder = recorder
@@ -315,7 +311,7 @@ func TestProcessIgnoresCanceledAfterSuccessfulResponseHeadersOnlyResult(t *testi
 
 func TestProcessReturnsErrorOnEarlyCanceledStream(t *testing.T) {
 	service := newEvaluatorService(t, map[string]ProfileRuntime{
-		"strict": newEvaluatorRuntime(t, "strict", model.EngineModeBlock),
+		"strict": newEvaluatorRuntime(t, "strict", blockTestDirectives),
 	}, "strict")
 
 	stream := &stubProcessStream{
@@ -330,7 +326,7 @@ func TestProcessReturnsErrorOnEarlyCanceledStream(t *testing.T) {
 
 func TestHandleMessageUnknownTypeReturnsInternalError(t *testing.T) {
 	service := newEvaluatorService(t, map[string]ProfileRuntime{
-		"strict": newEvaluatorRuntime(t, "strict", model.EngineModeBlock),
+		"strict": newEvaluatorRuntime(t, "strict", blockTestDirectives),
 	}, "strict")
 
 	state := service.newStreamState()
@@ -351,8 +347,8 @@ func TestHandleMessageUnknownTypeReturnsInternalError(t *testing.T) {
 
 func TestSelectProfileFromRouteMetadataShortKey(t *testing.T) {
 	service := newEvaluatorService(t, map[string]ProfileRuntime{
-		"default": newEvaluatorRuntime(t, "default", model.EngineModeDetect),
-		"strict":  newEvaluatorRuntime(t, "strict", model.EngineModeBlock),
+		"default": newEvaluatorRuntime(t, "default", detectTestDirectives),
+		"strict":  newEvaluatorRuntime(t, "strict", blockTestDirectives),
 	}, "default")
 
 	state := service.newStreamState()
@@ -362,9 +358,6 @@ func TestSelectProfileFromRouteMetadataShortKey(t *testing.T) {
 	if state.ProfileName() != "strict" {
 		t.Fatalf("expected strict profile, got %q", state.ProfileName())
 	}
-	if state.EngineMode() != model.EngineModeBlock {
-		t.Fatalf("expected block mode, got %q", state.EngineMode())
-	}
 	if result.Decision != model.DecisionDeny {
 		t.Fatalf("expected block profile to deny request, got %q", result.Decision)
 	}
@@ -372,8 +365,8 @@ func TestSelectProfileFromRouteMetadataShortKey(t *testing.T) {
 
 func TestSelectProfileFromRouteMetadataFullKey(t *testing.T) {
 	service := newEvaluatorService(t, map[string]ProfileRuntime{
-		"default": newEvaluatorRuntime(t, "default", model.EngineModeDetect),
-		"strict":  newEvaluatorRuntime(t, "strict", model.EngineModeBlock),
+		"default": newEvaluatorRuntime(t, "default", detectTestDirectives),
+		"strict":  newEvaluatorRuntime(t, "strict", blockTestDirectives),
 	}, "default")
 
 	state := service.newStreamState()
@@ -390,8 +383,8 @@ func TestSelectProfileFromRouteMetadataFullKey(t *testing.T) {
 
 func TestSelectProfileFromNamespacedExtProcAttributes(t *testing.T) {
 	service := newEvaluatorService(t, map[string]ProfileRuntime{
-		"default": newEvaluatorRuntime(t, "default", model.EngineModeDetect),
-		"strict":  newEvaluatorRuntime(t, "strict", model.EngineModeBlock),
+		"default": newEvaluatorRuntime(t, "default", detectTestDirectives),
+		"strict":  newEvaluatorRuntime(t, "strict", blockTestDirectives),
 	}, "default")
 
 	state := service.newStreamState()
@@ -408,8 +401,8 @@ func TestSelectProfileFromNamespacedExtProcAttributes(t *testing.T) {
 
 func TestSelectProfileFromNamespacedExtProcAttributesTextMetadata(t *testing.T) {
 	service := newEvaluatorService(t, map[string]ProfileRuntime{
-		"default": newEvaluatorRuntime(t, "default", model.EngineModeDetect),
-		"strict":  newEvaluatorRuntime(t, "strict", model.EngineModeBlock),
+		"default": newEvaluatorRuntime(t, "default", detectTestDirectives),
+		"strict":  newEvaluatorRuntime(t, "strict", blockTestDirectives),
 	}, "default")
 
 	state := service.newStreamState()
@@ -426,8 +419,8 @@ func TestSelectProfileFromNamespacedExtProcAttributesTextMetadata(t *testing.T) 
 
 func TestUnknownProfileFallsBackToDefault(t *testing.T) {
 	service := newEvaluatorService(t, map[string]ProfileRuntime{
-		"default": newEvaluatorRuntime(t, "default", model.EngineModeDetect),
-		"strict":  newEvaluatorRuntime(t, "strict", model.EngineModeBlock),
+		"default": newEvaluatorRuntime(t, "default", detectTestDirectives),
+		"strict":  newEvaluatorRuntime(t, "strict", blockTestDirectives),
 	}, "default")
 
 	state := service.newStreamState()
@@ -436,9 +429,6 @@ func TestUnknownProfileFallsBackToDefault(t *testing.T) {
 	result, resp := service.handleMessage(state, msg)
 	if state.ProfileName() != "default" {
 		t.Fatalf("expected fallback default profile, got %q", state.ProfileName())
-	}
-	if state.EngineMode() != model.EngineModeDetect {
-		t.Fatalf("expected detect mode fallback, got %q", state.EngineMode())
 	}
 	if result.Decision != model.DecisionAllow {
 		t.Fatalf("expected detection-only fallback to allow request, got %q", result.Decision)
@@ -450,8 +440,8 @@ func TestUnknownProfileFallsBackToDefault(t *testing.T) {
 
 func TestSelectProfileFromMetadataContext(t *testing.T) {
 	service := newEvaluatorService(t, map[string]ProfileRuntime{
-		"default": newEvaluatorRuntime(t, "default", model.EngineModeDetect),
-		"strict":  newEvaluatorRuntime(t, "strict", model.EngineModeBlock),
+		"default": newEvaluatorRuntime(t, "default", detectTestDirectives),
+		"strict":  newEvaluatorRuntime(t, "strict", blockTestDirectives),
 	}, "default")
 
 	state := service.newStreamState()
@@ -488,7 +478,7 @@ func TestInternalActionErrorsFailOpen(t *testing.T) {
 			},
 		}
 		service := newStubService(t, map[string]ProfileRuntime{
-			"strict": newStubRuntime("strict", model.EngineModeBlock, stub, model.ThresholdInfo{}, model.ThresholdInfo{}),
+			"strict": newStubRuntime("strict", stub, model.ThresholdInfo{}, model.ThresholdInfo{}),
 		}, "strict")
 
 		state := service.newStreamState()
@@ -513,7 +503,7 @@ func TestInternalActionErrorsFailOpen(t *testing.T) {
 			},
 		}
 		service := newStubService(t, map[string]ProfileRuntime{
-			"strict": newStubRuntime("strict", model.EngineModeBlock, stub, model.ThresholdInfo{}, model.ThresholdInfo{}),
+			"strict": newStubRuntime("strict", stub, model.ThresholdInfo{}, model.ThresholdInfo{}),
 		}, "strict")
 
 		state := service.newStreamState()
@@ -543,7 +533,7 @@ func TestInternalActionErrorsFailOpen(t *testing.T) {
 			},
 		}
 		service := newStubService(t, map[string]ProfileRuntime{
-			"strict": newStubRuntime("strict", model.EngineModeBlock, stub, model.ThresholdInfo{}, model.ThresholdInfo{}),
+			"strict": newStubRuntime("strict", stub, model.ThresholdInfo{}, model.ThresholdInfo{}),
 		}, "strict")
 
 		state := service.newStreamState()
@@ -573,7 +563,7 @@ func TestInternalActionErrorsFailOpen(t *testing.T) {
 			},
 		}
 		service := newStubService(t, map[string]ProfileRuntime{
-			"strict": newStubRuntime("strict", model.EngineModeBlock, stub, model.ThresholdInfo{}, model.ThresholdInfo{}),
+			"strict": newStubRuntime("strict", stub, model.ThresholdInfo{}, model.ThresholdInfo{}),
 		}, "strict")
 
 		state := service.newStreamState()
@@ -724,15 +714,13 @@ func (s *stubSession) ProcessResponseBodyChunk([]byte, bool) model.Result {
 func (s *stubSession) Close() {}
 
 type capturingRecorder struct {
-	request    model.Request
-	engineMode model.EngineMode
-	result     model.Result
-	called     bool
+	request model.Request
+	result  model.Result
+	called  bool
 }
 
-func (r *capturingRecorder) Record(req model.Request, engineMode model.EngineMode, result model.Result) {
+func (r *capturingRecorder) Record(req model.Request, result model.Result) {
 	r.request = req
-	r.engineMode = engineMode
 	r.result = result
 	r.called = true
 }
@@ -773,41 +761,28 @@ func (s *stubProcessStream) SetTrailer(metadata.MD)       {}
 func (s *stubProcessStream) SendMsg(any) error            { return nil }
 func (s *stubProcessStream) RecvMsg(any) error            { return nil }
 
-func newEvaluatorRuntime(t *testing.T, name string, mode model.EngineMode) ProfileRuntime {
+func newEvaluatorRuntime(t *testing.T, name string, directives string) ProfileRuntime {
 	t.Helper()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	evaluator, err := waf.NewEvaluatorWithDirectives(directivesForMode(mode), logger)
+	evaluator, err := waf.NewEvaluatorWithDirectives(directives, logger)
 	if err != nil {
 		t.Fatalf("new evaluator: %v", err)
 	}
-	runtime, err := NewProfileRuntime(name, evaluator, mode)
+	runtime, err := NewProfileRuntime(name, evaluator)
 	if err != nil {
 		t.Fatalf("new profile runtime: %v", err)
 	}
 	return runtime
 }
 
-func directivesForMode(mode model.EngineMode) string {
-	switch mode {
-	case model.EngineModeDetect:
-		return detectTestDirectives
-	case model.EngineModeOff:
-		return strings.ReplaceAll(blockTestDirectives, "SecRuleEngine On", "SecRuleEngine Off")
-	default:
-		return blockTestDirectives
-	}
-}
-
 func newStubRuntime(
 	name string,
-	mode model.EngineMode,
 	stub Session,
 	inboundThreshold model.ThresholdInfo,
 	outboundThreshold model.ThresholdInfo,
 ) ProfileRuntime {
 	return ProfileRuntime{
-		Name:       name,
-		EngineMode: mode,
+		Name: name,
 		NewSession: func(model.Request) Session {
 			return stub
 		},

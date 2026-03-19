@@ -25,7 +25,6 @@ func TestLogFinalResultDenyOutcome(t *testing.T) {
 			Method: "GET",
 		},
 		"strict",
-		model.EngineModeBlock,
 		model.Result{
 			Decision:       model.DecisionDeny,
 			HTTPStatusCode: 403,
@@ -64,6 +63,9 @@ func TestLogFinalResultDenyOutcome(t *testing.T) {
 	if got := actionResults[0]["threshold"]; got != 5 {
 		t.Fatalf("expected threshold 5, got %#v", got)
 	}
+	if _, exists := entry.attrs["mode"]; exists {
+		t.Fatalf("did not expect mode in log attrs, got %#v", entry.attrs["mode"])
+	}
 }
 
 func TestLogFinalResultAllowOutcome(t *testing.T) {
@@ -79,7 +81,6 @@ func TestLogFinalResultAllowOutcome(t *testing.T) {
 			Method: "GET",
 		},
 		"default",
-		model.EngineModeDetect,
 		model.Result{
 			Decision: model.DecisionAllow,
 		},
@@ -111,7 +112,6 @@ func TestLogFinalResultAllowOutcomeDebug(t *testing.T) {
 			Method: "GET",
 		},
 		"default",
-		model.EngineModeDetect,
 		model.Result{
 			Decision: model.DecisionAllow,
 		},
@@ -135,6 +135,9 @@ func TestLogFinalResultAllowOutcomeDebug(t *testing.T) {
 	if _, exists := entry.attrs["action_results"]; !exists {
 		t.Fatalf("expected action_results in debug summary, got %#v", entry.attrs)
 	}
+	if _, exists := entry.attrs["mode"]; exists {
+		t.Fatalf("did not expect mode in log attrs, got %#v", entry.attrs["mode"])
+	}
 }
 
 func TestLogFinalResultErrorOutcome(t *testing.T) {
@@ -150,7 +153,6 @@ func TestLogFinalResultErrorOutcome(t *testing.T) {
 			Method: "POST",
 		},
 		"strict",
-		model.EngineModeBlock,
 		model.Result{
 			Decision: model.DecisionAllow,
 			Err:      errors.New("synthetic processor failure"),

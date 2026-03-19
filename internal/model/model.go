@@ -2,14 +2,6 @@ package model
 
 import "context"
 
-type EngineMode string
-
-const (
-	EngineModeDetect EngineMode = "detect"
-	EngineModeBlock  EngineMode = "block"
-	EngineModeOff    EngineMode = "off"
-)
-
 type ProcessingAction string
 
 const (
@@ -85,5 +77,5 @@ type Evaluator interface {
 }
 
 type Recorder interface {
-	Record(req Request, engineMode EngineMode, result Result)
+	Record(req Request, result Result)
 }

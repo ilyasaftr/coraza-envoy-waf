@@ -120,15 +120,13 @@ func TestExtractProfileNameFromMetadataContext(t *testing.T) {
 func TestResolverFallsBackToDefault(t *testing.T) {
 	profiles := map[string]runtime.ProfileRuntime{
 		"default": {
-			Name:       "default",
-			EngineMode: model.EngineModeDetect,
+			Name: "default",
 			NewSession: func(model.Request) runtime.Session {
 				return stubSession{}
 			},
 		},
 		"strict": {
-			Name:       "strict",
-			EngineMode: model.EngineModeBlock,
+			Name: "strict",
 			NewSession: func(model.Request) runtime.Session {
 				return stubSession{}
 			},
@@ -156,8 +154,8 @@ func TestResolverFallsBackToDefault(t *testing.T) {
 	if name != "default" {
 		t.Fatalf("expected default profile, got %q", name)
 	}
-	if profile.EngineMode != model.EngineModeDetect {
-		t.Fatalf("expected default profile mode detect, got %q", profile.EngineMode)
+	if profile.Name != "default" {
+		t.Fatalf("expected default profile runtime, got %q", profile.Name)
 	}
 }
 

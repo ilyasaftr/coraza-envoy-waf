@@ -75,11 +75,11 @@ Profile contract:
 
 | Field | Values | Description |
 |---|---|---|
-| `directives` | multiline Coraza directives | Required. Must contain exactly one explicit `SecRuleEngine On`, `SecRuleEngine DetectionOnly`, or `SecRuleEngine Off` |
+| `directives` | multiline Coraza directives | Required. Effective engine behavior is whatever Coraza resolves from these directives and any included files. |
 
 Notes:
 
 - `profiles.yaml` is now the only WAF configuration source. Thresholds, exclusions, paranoia, body limits, MIME handling, early blocking, and custom rules all live inside `directives`.
-- If you include `@coraza.conf-recommended`, place your explicit `SecRuleEngine` after it. The recommended file defaults to `DetectionOnly`.
+- If you include `@coraza.conf-recommended`, remember it sets `SecRuleEngine DetectionOnly` unless a later directive overrides it.
 - Service-internal action errors are hardcoded fail-open. They remain visible in structured logs but no longer have a configurable `on_error` policy.
 - Threshold logging derives values from raw directives (`threshold_source=profile_directive`) and falls back to embedded CRS defaults (`threshold_source=crs_default`) when no override is present.

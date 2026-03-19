@@ -102,7 +102,7 @@ func buildProfileRuntimes(cfg config.Config, logger *slog.Logger) (map[string]ex
 			return nil, fmt.Errorf("profile %q: %w", name, err)
 		}
 
-		runtime, err := extproc.NewProfileRuntime(name, evaluator, profile.EngineMode)
+		runtime, err := extproc.NewProfileRuntime(name, evaluator)
 		if err != nil {
 			return nil, fmt.Errorf("profile %q: %w", name, err)
 		}

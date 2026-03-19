@@ -75,7 +75,6 @@ func TestNormalizeProfilesSuccessNormalizesFields(t *testing.T) {
 	normalized, defaultName, err := NormalizeProfiles(
 		map[string]ProfileRuntime{
 			"default": {
-				EngineMode: model.EngineMode(""),
 				NewSession: stubSessionFactory,
 			},
 		},
@@ -92,28 +91,10 @@ func TestNormalizeProfilesSuccessNormalizesFields(t *testing.T) {
 	if runtime.Name != "default" {
 		t.Fatalf("expected runtime name default, got %q", runtime.Name)
 	}
-	if runtime.EngineMode != model.EngineModeBlock {
-		t.Fatalf("expected mode fallback block, got %q", runtime.EngineMode)
-	}
 
 	threshold := runtime.ThresholdForAction(model.ActionRequestHeaders)
 	if threshold.Source != model.ThresholdSourceUnknown {
 		t.Fatalf("expected threshold source unknown, got %q", threshold.Source)
-	}
-}
-
-func TestNormalizeEngineMode(t *testing.T) {
-	if got := NormalizeEngineMode(model.EngineModeDetect); got != model.EngineModeDetect {
-		t.Fatalf("expected detect mode, got %q", got)
-	}
-	if got := NormalizeEngineMode(model.EngineModeBlock); got != model.EngineModeBlock {
-		t.Fatalf("expected block mode, got %q", got)
-	}
-	if got := NormalizeEngineMode(model.EngineModeOff); got != model.EngineModeOff {
-		t.Fatalf("expected off mode, got %q", got)
-	}
-	if got := NormalizeEngineMode(model.EngineMode("invalid")); got != model.EngineModeBlock {
-		t.Fatalf("expected invalid mode fallback to block, got %q", got)
 	}
 }
 

@@ -4,11 +4,9 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"regexp"
 	"strconv"
 	"strings"
 
-	"github.com/ilyasaftr/coraza-envoy-waf/internal/model"
 	yaml "go.yaml.in/yaml/v2"
 )
 
@@ -25,8 +23,6 @@ const (
 	EnvWAFProfilesPath      = "WAF_PROFILES_PATH"
 )
 
-var secRuleEnginePattern = regexp.MustCompile(`(?im)^\s*SecRuleEngine\s+(On|Off|DetectionOnly)\s*(?:#.*)?$`)
-
 type Config struct {
 	GRPCBind          string
 	MetricsBind       string
@@ -40,7 +36,6 @@ type Config struct {
 type Profile struct {
 	Name       string
 	Directives string
-	EngineMode model.EngineMode
 }
 
 type profilesFile struct {
@@ -114,37 +109,10 @@ func normalizeProfile(name string, raw rawProfile) (Profile, error) {
 		return Profile{}, fmt.Errorf("profiles.%s.directives: is required", name)
 	}
 
-	engineMode, err := parseEngineModeFromDirectives(directives)
-	if err != nil {
-		return Profile{}, fmt.Errorf("profiles.%s.directives: %w", name, err)
-	}
-
 	return Profile{
 		Name:       name,
 		Directives: directives,
-		EngineMode: engineMode,
 	}, nil
-}
-
-func parseEngineModeFromDirectives(directives string) (model.EngineMode, error) {
-	matches := secRuleEnginePattern.FindAllStringSubmatch(directives, -1)
-	if len(matches) == 0 {
-		return "", fmt.Errorf("must include exactly one explicit SecRuleEngine directive")
-	}
-	if len(matches) > 1 {
-		return "", fmt.Errorf("must include exactly one explicit SecRuleEngine directive")
-	}
-
-	switch strings.ToLower(strings.TrimSpace(matches[0][1])) {
-	case "on":
-		return model.EngineModeBlock, nil
-	case "detectiononly":
-		return model.EngineModeDetect, nil
-	case "off":
-		return model.EngineModeOff, nil
-	default:
-		return "", fmt.Errorf("SecRuleEngine must be On, DetectionOnly, or Off")
-	}
 }
 
 func parseLevel(raw string) slog.Level {

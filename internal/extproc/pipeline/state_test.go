@@ -60,8 +60,7 @@ func TestCaptureResultPrefersDeny(t *testing.T) {
 func TestEnsureRequestBodyFinalizedRunsOnce(t *testing.T) {
 	stub := &countingSession{}
 	state := NewStreamState("default", runtime.ProfileRuntime{
-		Name:       "default",
-		EngineMode: model.EngineModeBlock,
+		Name: "default",
 		NewSession: func(model.Request) runtime.Session {
 			return stub
 		},
@@ -86,8 +85,7 @@ func TestEnsureRequestBodyFinalizedRunsOnce(t *testing.T) {
 
 func newState() *StreamState {
 	return NewStreamState("default", runtime.ProfileRuntime{
-		Name:       "default",
-		EngineMode: model.EngineModeDetect,
+		Name: "default",
 		NewSession: func(model.Request) runtime.Session {
 			return noopSession{}
 		},
