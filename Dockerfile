@@ -1,4 +1,5 @@
-FROM --platform=$BUILDPLATFORM golang:1.26-bookworm AS build
+# CGO needs target-native toolchains and dev libraries for multi-arch builds.
+FROM --platform=$TARGETPLATFORM golang:1.26-bookworm AS build
 
 ARG TARGETOS
 ARG TARGETARCH
