@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	shutdownTimeout          = 10 * time.Second
+	shutdownTimeout         = 10 * time.Second
 	grpcKeepaliveIdle       = 5 * time.Minute
 	grpcKeepaliveTime       = 2 * time.Minute
 	grpcKeepaliveTimeout    = 20 * time.Second
@@ -25,8 +25,9 @@ const (
 type App struct {
 	logger *slog.Logger
 
-	grpcBind    string
-	metricsBind string
+	grpcBind          string
+	metricsBind       string
+	streamWorkerCount uint32
 
 	extProcServer extprocv3.ExternalProcessorServer
 	httpHandler   http.Handler
@@ -45,6 +46,7 @@ type App struct {
 func New(
 	grpcBind string,
 	metricsBind string,
+	streamWorkerCount uint32,
 	extProcServer extprocv3.ExternalProcessorServer,
 	httpHandler http.Handler,
 	logger *slog.Logger,
@@ -54,13 +56,14 @@ func New(
 	}
 
 	return &App{
-		logger:        logger,
-		grpcBind:      grpcBind,
-		metricsBind:   metricsBind,
-		extProcServer: extProcServer,
-		httpHandler:   httpHandler,
-		errCh:         make(chan error, 2),
-		shutdownCh:    make(chan struct{}),
+		logger:            logger,
+		grpcBind:          grpcBind,
+		metricsBind:       metricsBind,
+		streamWorkerCount: streamWorkerCount,
+		extProcServer:     extProcServer,
+		httpHandler:       httpHandler,
+		errCh:             make(chan error, 2),
+		shutdownCh:        make(chan struct{}),
 	}
 }
 
@@ -80,7 +83,7 @@ func (a *App) Start() error {
 			return
 		}
 
-		a.grpcServer = grpc.NewServer(
+		options := []grpc.ServerOption{
 			grpc.KeepaliveParams(keepalive.ServerParameters{
 				MaxConnectionIdle: grpcKeepaliveIdle,
 				Time:              grpcKeepaliveTime,
@@ -90,7 +93,11 @@ func (a *App) Start() error {
 				MinTime:             grpcKeepaliveMinPingGap,
 				PermitWithoutStream: true,
 			}),
-		)
+		}
+		if a.streamWorkerCount > 0 {
+			options = append(options, grpc.NumStreamWorkers(a.streamWorkerCount))
+		}
+		a.grpcServer = grpc.NewServer(options...)
 		extprocv3.RegisterExternalProcessorServer(a.grpcServer, a.extProcServer)
 
 		a.metricsServer = &http.Server{

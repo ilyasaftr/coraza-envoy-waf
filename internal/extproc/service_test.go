@@ -273,6 +273,63 @@ func TestProcessIgnoresCanceledAfterSuccessfulResult(t *testing.T) {
 	}
 }
 
+func TestProcessIgnoresCanceledAfterSuccessfulRequestOnlyResult(t *testing.T) {
+	service := newEvaluatorService(t, map[string]ProfileRuntime{
+		"strict": newEvaluatorRuntime(t, "strict", model.ModeBlock, model.OnErrorPolicy{Default: model.ErrorPolicyDeny}),
+	}, "strict")
+	recorder := &capturingRecorder{}
+	service.recorder = recorder
+
+	stream := &stubProcessStream{
+		recvMessages: []*extprocv3.ProcessingRequest{
+			requestHeadersMessageWithEndOfStream("/ok", nil, true),
+		},
+		recvErr: status.Error(codes.Canceled, "context canceled"),
+	}
+
+	err := service.Process(stream)
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if recorder.result.Decision == model.DecisionError {
+		t.Fatalf("expected no final error override, got %+v", recorder.result)
+	}
+}
+
+func TestProcessIgnoresCanceledAfterSuccessfulResponseHeadersOnlyResult(t *testing.T) {
+	service := newEvaluatorService(t, map[string]ProfileRuntime{
+		"strict": newEvaluatorRuntime(t, "strict", model.ModeBlock, model.OnErrorPolicy{Default: model.ErrorPolicyDeny}),
+	}, "strict")
+	recorder := &capturingRecorder{}
+	service.recorder = recorder
+
+	stream := &stubProcessStream{
+		recvMessages: []*extprocv3.ProcessingRequest{
+			requestHeadersMessageWithEndOfStream("/ok", nil, false),
+			{
+				Request: &extprocv3.ProcessingRequest_ResponseHeaders{
+					ResponseHeaders: &extprocv3.HttpHeaders{
+						Headers: headerMap(
+							":status", "200",
+							"content-type", "application/json",
+						),
+						EndOfStream: true,
+					},
+				},
+			},
+		},
+		recvErr: status.Error(codes.Canceled, "context canceled"),
+	}
+
+	err := service.Process(stream)
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if recorder.result.Decision == model.DecisionError {
+		t.Fatalf("expected no final error override, got %+v", recorder.result)
+	}
+}
+
 func TestProcessReturnsErrorOnEarlyCanceledStream(t *testing.T) {
 	service := newEvaluatorService(t, map[string]ProfileRuntime{
 		"strict": newEvaluatorRuntime(t, "strict", model.ModeBlock, model.OnErrorPolicy{Default: model.ErrorPolicyDeny}),

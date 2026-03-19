@@ -42,7 +42,7 @@ func NewResolver(profiles map[string]runtime.ProfileRuntime, defaultProfile stri
 func (r *Resolver) Resolve(msg *extprocv3.ProcessingRequest) (string, runtime.ProfileRuntime) {
 	candidate, found := ExtractProfileName(msg)
 	if !found {
-		r.logger.Warn("missing coraza profile metadata; using default profile", "default_profile", r.defaultProfile)
+		r.logger.Debug("missing coraza profile metadata; using default profile", "default_profile", r.defaultProfile)
 		return r.defaultProfile, r.profiles[r.defaultProfile]
 	}
 

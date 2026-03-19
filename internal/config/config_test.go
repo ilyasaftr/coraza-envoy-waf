@@ -37,6 +37,9 @@ profiles:
 	if cfg.LogLevel != slog.LevelInfo {
 		t.Fatalf("unexpected log level: %v", cfg.LogLevel)
 	}
+	if cfg.GRPCStreamWorkers != 0 {
+		t.Fatalf("unexpected grpc stream workers: %d", cfg.GRPCStreamWorkers)
+	}
 	if cfg.DefaultProfile != "default" {
 		t.Fatalf("unexpected default profile: %q", cfg.DefaultProfile)
 	}
@@ -66,6 +69,8 @@ profiles:
   strict:
     mode: block
     early_blocking: true
+    blocking_paranoia_level: 2
+    detection_paranoia_level: 3
     excluded_rule_ids: [942100, 941130, 942100]
     inbound_anomaly_score_threshold: 9
     outbound_anomaly_score_threshold: 7
@@ -96,6 +101,14 @@ profiles:
 	if cfg.LogLevel != slog.LevelDebug {
 		t.Fatalf("unexpected log level: %v", cfg.LogLevel)
 	}
+	t.Setenv(EnvGRPCNumStreamWorkers, "4")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("load config with grpc stream workers: %v", err)
+	}
+	if cfg.GRPCStreamWorkers != 4 {
+		t.Fatalf("unexpected grpc stream workers: %d", cfg.GRPCStreamWorkers)
+	}
 	if cfg.DefaultProfile != "strict" {
 		t.Fatalf("unexpected default profile: %q", cfg.DefaultProfile)
 	}
@@ -106,6 +119,12 @@ profiles:
 	}
 	if !profile.EarlyBlocking {
 		t.Fatal("expected early_blocking to be enabled")
+	}
+	if profile.BlockingParanoiaLevel == nil || *profile.BlockingParanoiaLevel != 2 {
+		t.Fatalf("unexpected blocking paranoia level: %+v", profile.BlockingParanoiaLevel)
+	}
+	if profile.DetectionParanoiaLevel == nil || *profile.DetectionParanoiaLevel != 3 {
+		t.Fatalf("unexpected detection paranoia level: %+v", profile.DetectionParanoiaLevel)
 	}
 	if profile.RequestBodyLimit != 4096 {
 		t.Fatalf("unexpected request body limit: %d", profile.RequestBodyLimit)
@@ -209,6 +228,63 @@ profiles:
 	t.Setenv(EnvWAFProfilesPath, profilesPath)
 	if _, err := Load(); err == nil {
 		t.Fatal("expected invalid threshold error")
+	}
+}
+
+func TestLoadInvalidGRPCNumStreamWorkersFails(t *testing.T) {
+	profilesPath := writeProfilesFile(t, `
+default_profile: strict
+profiles:
+  strict:
+    mode: block
+`)
+	t.Setenv(EnvWAFProfilesPath, profilesPath)
+	t.Setenv(EnvGRPCNumStreamWorkers, "-1")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected invalid grpc num stream workers error")
+	}
+}
+
+func TestLoadInvalidBlockingParanoiaLevelFails(t *testing.T) {
+	profilesPath := writeProfilesFile(t, `
+default_profile: strict
+profiles:
+  strict:
+    mode: block
+    blocking_paranoia_level: 5
+`)
+	t.Setenv(EnvWAFProfilesPath, profilesPath)
+	if _, err := Load(); err == nil {
+		t.Fatal("expected invalid blocking paranoia level error")
+	}
+}
+
+func TestLoadInvalidDetectionParanoiaLevelFails(t *testing.T) {
+	profilesPath := writeProfilesFile(t, `
+default_profile: strict
+profiles:
+  strict:
+    mode: block
+    detection_paranoia_level: 0
+`)
+	t.Setenv(EnvWAFProfilesPath, profilesPath)
+	if _, err := Load(); err == nil {
+		t.Fatal("expected invalid detection paranoia level error")
+	}
+}
+
+func TestLoadDetectionParanoiaLevelMustNotBeLowerThanBlocking(t *testing.T) {
+	profilesPath := writeProfilesFile(t, `
+default_profile: strict
+profiles:
+  strict:
+    mode: block
+    blocking_paranoia_level: 3
+    detection_paranoia_level: 2
+`)
+	t.Setenv(EnvWAFProfilesPath, profilesPath)
+	if _, err := Load(); err == nil {
+		t.Fatal("expected invalid detection paranoia level ordering error")
 	}
 }
 

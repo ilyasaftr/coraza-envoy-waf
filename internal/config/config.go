@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/ilyasaftr/coraza-envoy-waf/internal/model"
@@ -18,25 +19,29 @@ const (
 )
 
 const (
-	EnvGRPCBind        = "GRPC_BIND"
-	EnvMetricsBind     = "METRICS_BIND"
-	EnvLogLevel        = "LOG_LEVEL"
-	EnvWAFProfilesPath = "WAF_PROFILES_PATH"
+	EnvGRPCBind             = "GRPC_BIND"
+	EnvMetricsBind          = "METRICS_BIND"
+	EnvLogLevel             = "LOG_LEVEL"
+	EnvGRPCNumStreamWorkers = "GRPC_NUM_STREAM_WORKERS"
+	EnvWAFProfilesPath      = "WAF_PROFILES_PATH"
 )
 
 type Config struct {
-	GRPCBind       string
-	MetricsBind    string
-	LogLevel       slog.Level
-	ProfilesPath   string
-	DefaultProfile string
-	Profiles       map[string]Profile
+	GRPCBind          string
+	MetricsBind       string
+	LogLevel          slog.Level
+	GRPCStreamWorkers uint32
+	ProfilesPath      string
+	DefaultProfile    string
+	Profiles          map[string]Profile
 }
 
 type Profile struct {
 	Name                     string
 	Mode                     model.Mode
 	EarlyBlocking            bool
+	BlockingParanoiaLevel    *int
+	DetectionParanoiaLevel   *int
 	RequestBodyLimit         int
 	ResponseBodyLimit        int
 	ResponseBodyMIMETypes    []string
@@ -54,6 +59,8 @@ type profilesFile struct {
 type rawProfile struct {
 	Mode                     string     `yaml:"mode"`
 	EarlyBlocking            bool       `yaml:"early_blocking"`
+	BlockingParanoiaLevel    *int       `yaml:"blocking_paranoia_level"`
+	DetectionParanoiaLevel   *int       `yaml:"detection_paranoia_level"`
 	ExcludedRuleIDs          []int      `yaml:"excluded_rule_ids"`
 	InboundAnomalyThreshold  *int       `yaml:"inbound_anomaly_score_threshold"`
 	OutboundAnomalyThreshold *int       `yaml:"outbound_anomaly_score_threshold"`
@@ -72,11 +79,16 @@ type rawOnError struct {
 }
 
 func Load() (Config, error) {
+	streamWorkers, err := parseNonNegativeIntEnv(EnvGRPCNumStreamWorkers)
+	if err != nil {
+		return Config{}, err
+	}
 	cfg := Config{
-		GRPCBind:     envOrDefault(EnvGRPCBind, defaultGRPCBind),
-		MetricsBind:  envOrDefault(EnvMetricsBind, defaultHTTPBind),
-		LogLevel:     parseLevel(envOrDefault(EnvLogLevel, "INFO")),
-		ProfilesPath: strings.TrimSpace(os.Getenv(EnvWAFProfilesPath)),
+		GRPCBind:          envOrDefault(EnvGRPCBind, defaultGRPCBind),
+		MetricsBind:       envOrDefault(EnvMetricsBind, defaultHTTPBind),
+		LogLevel:          parseLevel(envOrDefault(EnvLogLevel, "INFO")),
+		GRPCStreamWorkers: uint32(streamWorkers),
+		ProfilesPath:      strings.TrimSpace(os.Getenv(EnvWAFProfilesPath)),
 	}
 	if cfg.ProfilesPath == "" {
 		return cfg, fmt.Errorf("%s is required", EnvWAFProfilesPath)
@@ -128,6 +140,19 @@ func normalizeProfile(name string, raw rawProfile) (Profile, error) {
 		return Profile{}, fmt.Errorf("profiles.%s.mode: %w", name, err)
 	}
 
+	blockingParanoiaLevel, err := normalizeOptionalParanoiaLevel(raw.BlockingParanoiaLevel)
+	if err != nil {
+		return Profile{}, fmt.Errorf("profiles.%s.blocking_paranoia_level: %w", name, err)
+	}
+
+	detectionParanoiaLevel, err := normalizeOptionalParanoiaLevel(raw.DetectionParanoiaLevel)
+	if err != nil {
+		return Profile{}, fmt.Errorf("profiles.%s.detection_paranoia_level: %w", name, err)
+	}
+	if blockingParanoiaLevel != nil && detectionParanoiaLevel != nil && *detectionParanoiaLevel < *blockingParanoiaLevel {
+		return Profile{}, fmt.Errorf("profiles.%s.detection_paranoia_level: must be greater than or equal to blocking_paranoia_level", name)
+	}
+
 	excludedRuleIDs, err := normalizeRuleIDs(raw.ExcludedRuleIDs)
 	if err != nil {
 		return Profile{}, fmt.Errorf("profiles.%s.excluded_rule_ids: %w", name, err)
@@ -167,6 +192,8 @@ func normalizeProfile(name string, raw rawProfile) (Profile, error) {
 		Name:                     name,
 		Mode:                     mode,
 		EarlyBlocking:            raw.EarlyBlocking,
+		BlockingParanoiaLevel:    blockingParanoiaLevel,
+		DetectionParanoiaLevel:   detectionParanoiaLevel,
 		RequestBodyLimit:         requestBodyLimit,
 		ResponseBodyLimit:        responseBodyLimit,
 		ResponseBodyMIMETypes:    responseBodyMIMETypes,
@@ -273,6 +300,16 @@ func normalizeOptionalPositiveInt(value *int) (*int, error) {
 	return cloneIntPointer(value), nil
 }
 
+func normalizeOptionalParanoiaLevel(value *int) (*int, error) {
+	if value == nil {
+		return nil, nil
+	}
+	if *value < 1 || *value > 4 {
+		return nil, fmt.Errorf("must be an integer between 1 and 4")
+	}
+	return cloneIntPointer(value), nil
+}
+
 func normalizeBodyLimit(value *int) (int, error) {
 	if value == nil {
 		return defaultBodySize, nil
@@ -325,6 +362,21 @@ func envOrDefault(name, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func parseNonNegativeIntEnv(name string) (int, error) {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return 0, nil
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, fmt.Errorf("%s must be a non-negative integer", name)
+	}
+	if value < 0 {
+		return 0, fmt.Errorf("%s must be a non-negative integer", name)
+	}
+	return value, nil
 }
 
 func cloneIntPointer(value *int) *int {

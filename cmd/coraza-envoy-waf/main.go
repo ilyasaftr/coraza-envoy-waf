@@ -64,6 +64,7 @@ func main() {
 	app := server.New(
 		cfg.GRPCBind,
 		cfg.MetricsBind,
+		cfg.GRPCStreamWorkers,
 		extProcService,
 		mux,
 		logger,
@@ -78,6 +79,7 @@ func main() {
 		"coraza ext_proc service started",
 		"grpc_bind", app.GRPCAddr(),
 		"metrics_bind", app.MetricsAddr(),
+		"grpc_num_stream_workers", cfg.GRPCStreamWorkers,
 		"default_profile", cfg.DefaultProfile,
 		"profiles", sortedProfileNames(runtimes),
 		"profiles_path", cfg.ProfilesPath,
@@ -99,6 +101,8 @@ func buildProfileRuntimes(cfg config.Config, logger *slog.Logger) (map[string]ex
 			profile.RequestBodyLimit,
 			profile.ResponseBodyLimit,
 			waf.RuntimeOptions{
+				BlockingParanoiaLevel:    profile.BlockingParanoiaLevel,
+				DetectionParanoiaLevel:   profile.DetectionParanoiaLevel,
 				ExcludedRuleIDs:          profile.ExcludedRuleIDs,
 				InboundAnomalyThreshold:  profile.InboundAnomalyThreshold,
 				OutboundAnomalyThreshold: profile.OutboundAnomalyThreshold,

@@ -33,6 +33,7 @@ func TestAppStartsAndServesHealthAndGrpc(t *testing.T) {
 	app := New(
 		"127.0.0.1:0",
 		"127.0.0.1:0",
+		0,
 		allowExtProcServer{},
 		mux,
 		logger,

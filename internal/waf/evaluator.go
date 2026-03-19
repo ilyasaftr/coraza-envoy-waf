@@ -33,6 +33,8 @@ var (
 )
 
 type RuntimeOptions struct {
+	BlockingParanoiaLevel    *int
+	DetectionParanoiaLevel   *int
 	ExcludedRuleIDs          []int
 	InboundAnomalyThreshold  *int
 	OutboundAnomalyThreshold *int
@@ -391,6 +393,18 @@ func buildRuntimeDirectives(options RuntimeOptions) (string, model.ThresholdInfo
 		lines = append(
 			lines,
 			fmt.Sprintf(`SecAction "id:10000002,phase:1,pass,nolog,setvar:tx.outbound_anomaly_score_threshold=%d"`, *options.OutboundAnomalyThreshold),
+		)
+	}
+	if options.BlockingParanoiaLevel != nil {
+		lines = append(
+			lines,
+			fmt.Sprintf(`SecAction "id:10000004,phase:1,pass,nolog,setvar:tx.blocking_paranoia_level=%d"`, *options.BlockingParanoiaLevel),
+		)
+	}
+	if options.DetectionParanoiaLevel != nil {
+		lines = append(
+			lines,
+			fmt.Sprintf(`SecAction "id:10000005,phase:1,pass,nolog,setvar:tx.detection_paranoia_level=%d"`, *options.DetectionParanoiaLevel),
 		)
 	}
 	if options.EarlyBlocking {

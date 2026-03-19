@@ -27,6 +27,7 @@ type StreamState struct {
 	profile         runtime.ProfileRuntime
 	session         runtime.Session
 	requestBodyDone bool
+	responseStarted bool
 	finalResult     model.Result
 	hasResult       bool
 	streamClosed    bool
@@ -142,6 +143,10 @@ func (s *StreamState) StreamClosed() bool {
 	return s.streamClosed
 }
 
+func (s *StreamState) RequestComplete() bool {
+	return s.requestBodyDone
+}
+
 func (s *StreamState) ProcessRequestHeaders() model.Result {
 	s.ensureSession()
 	return s.session.ProcessRequestHeaders()
@@ -168,11 +173,13 @@ func (s *StreamState) EnsureRequestBodyFinalized() (model.Result, bool) {
 
 func (s *StreamState) ProcessResponseHeaders(statusCode int, protocol string, headers []model.Header) model.Result {
 	s.ensureSession()
+	s.responseStarted = true
 	return s.session.ProcessResponseHeaders(statusCode, protocol, headers)
 }
 
 func (s *StreamState) ProcessResponseBody(body []byte, endOfStream bool) model.Result {
 	s.ensureSession()
+	s.responseStarted = true
 	return s.session.ProcessResponseBodyChunk(body, endOfStream)
 }
 

@@ -29,6 +29,7 @@ A gRPC `ext_proc` service that inspects HTTP requests and responses using [Coraz
 | `GRPC_BIND` | `:9002` | gRPC bind address |
 | `METRICS_BIND` | `:9090` | HTTP bind for `/healthz` and `/metrics` |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
+| `GRPC_NUM_STREAM_WORKERS` | `0` | grpc-go stream worker count; `0` disables the experimental worker pool |
 
 ## profiles.yaml
 
@@ -37,9 +38,11 @@ default_profile: default
 profiles:
   default:
     mode: detect
+    blocking_paranoia_level: 1
   strict:
     mode: block
     early_blocking: true
+    blocking_paranoia_level: 1
     excluded_rule_ids: [941130]
     inbound_anomaly_score_threshold: 5
     outbound_anomaly_score_threshold: 5
@@ -57,6 +60,8 @@ Full options:
 |---|---|---|
 | `mode` | `detect` \| `block` | Detect logs interruptions; block denies with 403 |
 | `early_blocking` | `true` \| `false` | Enables CRS early blocking (`tx.early_blocking=1`) for the profile |
+| `blocking_paranoia_level` | `1..4` | CRS blocking paranoia level for the profile |
+| `detection_paranoia_level` | `1..4` | Optional CRS detection paranoia level; must be greater than or equal to `blocking_paranoia_level` |
 | `on_error.default` | `allow` \| `deny` | Response when a processing error occurs |
 | `excluded_rule_ids` | list of ints | Rule IDs to skip |
 | `inbound_anomaly_score_threshold` | int | Anomaly score limit for requests |

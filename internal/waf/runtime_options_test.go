@@ -80,6 +80,8 @@ func TestBuildRuntimeDirectivesWithThresholdOverrides(t *testing.T) {
 
 func TestBuildRuntimeDirectivesCombined(t *testing.T) {
 	directives, inbound, outbound, err := buildRuntimeDirectives(RuntimeOptions{
+		BlockingParanoiaLevel:    intPtr(2),
+		DetectionParanoiaLevel:   intPtr(3),
 		ExcludedRuleIDs:          []int{941130},
 		InboundAnomalyThreshold:  intPtr(7),
 		OutboundAnomalyThreshold: intPtr(6),
@@ -93,10 +95,32 @@ func TestBuildRuntimeDirectivesCombined(t *testing.T) {
 	assertContains(t, directives, "SecRuleRemoveById 941130")
 	assertContains(t, directives, "tx.inbound_anomaly_score_threshold=7")
 	assertContains(t, directives, "tx.outbound_anomaly_score_threshold=6")
+	assertContains(t, directives, "tx.blocking_paranoia_level=2")
+	assertContains(t, directives, "tx.detection_paranoia_level=3")
 	assertContains(t, directives, "tx.early_blocking=1")
 	assertContains(t, directives, "SecResponseBodyMimeType application/json text/plain")
 	if inbound.Source != model.ThresholdSourceEnvOverride || outbound.Source != model.ThresholdSourceEnvOverride {
 		t.Fatalf("unexpected threshold sources: inbound=%q outbound=%q", inbound.Source, outbound.Source)
+	}
+}
+
+func TestBuildRuntimeDirectivesParanoiaLevelsBeforeCRSInclude(t *testing.T) {
+	directives, _, _, err := buildRuntimeDirectives(RuntimeOptions{
+		BlockingParanoiaLevel:  intPtr(2),
+		DetectionParanoiaLevel: intPtr(4),
+	})
+	if err != nil {
+		t.Fatalf("build runtime directives: %v", err)
+	}
+
+	blockingIdx := strings.Index(directives, "tx.blocking_paranoia_level=2")
+	detectionIdx := strings.Index(directives, "tx.detection_paranoia_level=4")
+	includeIdx := strings.Index(directives, "Include @owasp_crs/*.conf")
+	if blockingIdx == -1 || detectionIdx == -1 || includeIdx == -1 {
+		t.Fatalf("expected paranoia directives and CRS include, got: %s", directives)
+	}
+	if blockingIdx > includeIdx || detectionIdx > includeIdx {
+		t.Fatalf("expected paranoia directives before CRS include, got: %s", directives)
 	}
 }
 

@@ -188,5 +188,11 @@ func shouldIgnoreRecvError(err error, state *streamState) bool {
 	if status.Code(err) != codes.Canceled {
 		return false
 	}
-	return state.StreamClosed()
+	if state.StreamClosed() {
+		return true
+	}
+	if !state.RequestComplete() {
+		return false
+	}
+	return state.FinalResult().Decision != model.DecisionError
 }
