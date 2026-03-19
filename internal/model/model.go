@@ -77,5 +77,5 @@ type Evaluator interface {
 }
 
 type Recorder interface {
-	Record(req Request, result Result)
+	Record(req Request, profileName string, result Result)
 }

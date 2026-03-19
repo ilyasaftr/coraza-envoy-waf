@@ -714,13 +714,15 @@ func (s *stubSession) ProcessResponseBodyChunk([]byte, bool) model.Result {
 func (s *stubSession) Close() {}
 
 type capturingRecorder struct {
-	request model.Request
-	result  model.Result
-	called  bool
+	request     model.Request
+	profileName string
+	result      model.Result
+	called      bool
 }
 
-func (r *capturingRecorder) Record(req model.Request, result model.Result) {
+func (r *capturingRecorder) Record(req model.Request, profileName string, result model.Result) {
 	r.request = req
+	r.profileName = profileName
 	r.result = result
 	r.called = true
 }

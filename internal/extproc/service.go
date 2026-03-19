@@ -64,7 +64,7 @@ func (s *Service) Process(stream extprocv3.ExternalProcessor_ProcessServer) erro
 	defer func() {
 		state.Close()
 		state.EnsureFinalAllow()
-		s.recorder.Record(state.Request(), state.FinalResult())
+		s.recorder.Record(state.Request(), state.ProfileName(), state.FinalResult())
 		observe.LogFinalResult(s.logger, state.Request(), state.ProfileName(), state.FinalResult(), state.Outcomes())
 	}()
 
@@ -179,7 +179,7 @@ func (s *Service) handleMessage(state *streamState, msg *extprocv3.ProcessingReq
 
 type noopRecorder struct{}
 
-func (noopRecorder) Record(model.Request, model.Result) {}
+func (noopRecorder) Record(model.Request, string, model.Result) {}
 
 func shouldIgnoreRecvError(err error, state *streamState) bool {
 	if err == nil || state == nil {

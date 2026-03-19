@@ -1,14 +1,16 @@
 package metrics
 
 import (
+	"strings"
+
 	"github.com/ilyasaftr/coraza-envoy-waf/internal/model"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
 type PrometheusRecorder struct {
 	requests      *prometheus.CounterVec
-	interruptions prometheus.Counter
-	failures      prometheus.Counter
+	interruptions *prometheus.CounterVec
+	failures      *prometheus.CounterVec
 }
 
 func NewPrometheusRecorder(registerer prometheus.Registerer) (*PrometheusRecorder, error) {
@@ -16,21 +18,23 @@ func NewPrometheusRecorder(registerer prometheus.Registerer) (*PrometheusRecorde
 		requests: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "coraza_ext_proc_requests_total",
-				Help: "Total ext_proc requests by decision.",
+				Help: "Total ext_proc requests by profile and decision.",
 			},
-			[]string{"decision"},
+			[]string{"profile", "decision"},
 		),
-		interruptions: prometheus.NewCounter(
+		interruptions: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "coraza_ext_proc_interruptions_total",
-				Help: "Total Coraza interruptions.",
+				Help: "Total Coraza interruptions by profile.",
 			},
+			[]string{"profile"},
 		),
-		failures: prometheus.NewCounter(
+		failures: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "coraza_ext_proc_failures_total",
-				Help: "Total ext_proc internal failures.",
+				Help: "Total ext_proc internal failures by profile.",
 			},
+			[]string{"profile"},
 		),
 	}
 
@@ -47,22 +51,31 @@ func NewPrometheusRecorder(registerer prometheus.Registerer) (*PrometheusRecorde
 	return recorder, nil
 }
 
-func (r *PrometheusRecorder) Record(_ model.Request, result model.Result) {
+func (r *PrometheusRecorder) Record(_ model.Request, profileName string, result model.Result) {
+	profileName = normalizeProfileLabel(profileName)
 	decision := string(result.Decision)
 	if decision == "" {
 		decision = string(model.DecisionAllow)
 	}
-	r.requests.WithLabelValues(decision).Inc()
+	r.requests.WithLabelValues(profileName, decision).Inc()
 
 	if result.Interruption != nil {
-		r.interruptions.Inc()
+		r.interruptions.WithLabelValues(profileName).Inc()
 	}
 
 	if result.Decision == model.DecisionError || result.Err != nil {
-		r.failures.Inc()
+		r.failures.WithLabelValues(profileName).Inc()
 	}
 }
 
 type NoopRecorder struct{}
 
-func (NoopRecorder) Record(_ model.Request, _ model.Result) {}
+func (NoopRecorder) Record(_ model.Request, _ string, _ model.Result) {}
+
+func normalizeProfileLabel(profileName string) string {
+	profileName = strings.TrimSpace(profileName)
+	if profileName == "" {
+		return "unknown"
+	}
+	return profileName
+}

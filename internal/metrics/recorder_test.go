@@ -10,37 +10,37 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
-func TestPrometheusRecorderUsesDecisionOnlyAndUnlabeledInterruptions(t *testing.T) {
+func TestPrometheusRecorderUsesProfileAndDecisionLabels(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	recorder, err := NewPrometheusRecorder(registry)
 	if err != nil {
 		t.Fatalf("new prometheus recorder: %v", err)
 	}
 
-	recorder.Record(model.Request{}, model.Result{Decision: model.DecisionAllow})
-	recorder.Record(model.Request{}, model.Result{
+	recorder.Record(model.Request{}, "default", model.Result{Decision: model.DecisionAllow})
+	recorder.Record(model.Request{}, "strict", model.Result{
 		Decision: model.DecisionDeny,
 		Interruption: &model.Interruption{
 			RuleID: 942100,
 		},
 	})
-	recorder.Record(model.Request{}, model.Result{
+	recorder.Record(model.Request{}, "", model.Result{
 		Decision: model.DecisionError,
 		Err:      errors.New("ignored"),
 	})
 
 	expected := `
-# HELP coraza_ext_proc_requests_total Total ext_proc requests by decision.
+# HELP coraza_ext_proc_requests_total Total ext_proc requests by profile and decision.
 # TYPE coraza_ext_proc_requests_total counter
-coraza_ext_proc_requests_total{decision="allow"} 1
-coraza_ext_proc_requests_total{decision="deny"} 1
-coraza_ext_proc_requests_total{decision="error"} 1
-# HELP coraza_ext_proc_interruptions_total Total Coraza interruptions.
+coraza_ext_proc_requests_total{decision="allow",profile="default"} 1
+coraza_ext_proc_requests_total{decision="deny",profile="strict"} 1
+coraza_ext_proc_requests_total{decision="error",profile="unknown"} 1
+# HELP coraza_ext_proc_interruptions_total Total Coraza interruptions by profile.
 # TYPE coraza_ext_proc_interruptions_total counter
-coraza_ext_proc_interruptions_total 1
-# HELP coraza_ext_proc_failures_total Total ext_proc internal failures.
+coraza_ext_proc_interruptions_total{profile="strict"} 1
+# HELP coraza_ext_proc_failures_total Total ext_proc internal failures by profile.
 # TYPE coraza_ext_proc_failures_total counter
-coraza_ext_proc_failures_total 1
+coraza_ext_proc_failures_total{profile="unknown"} 1
 `
 
 	if err := testutil.GatherAndCompare(registry, strings.NewReader(expected),
