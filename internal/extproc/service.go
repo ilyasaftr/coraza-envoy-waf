@@ -31,8 +31,8 @@ type Service struct {
 	logger         *slog.Logger
 }
 
-func NewProfileRuntime(name string, evaluator *waf.Evaluator, mode model.Mode, onError model.OnErrorPolicy) (ProfileRuntime, error) {
-	return extprocruntime.NewProfileRuntime(name, evaluator, mode, onError)
+func NewProfileRuntime(name string, evaluator *waf.Evaluator, engineMode model.EngineMode) (ProfileRuntime, error) {
+	return extprocruntime.NewProfileRuntime(name, evaluator, engineMode)
 }
 
 func NewService(profiles map[string]ProfileRuntime, defaultProfile string, recorder model.Recorder, logger *slog.Logger) (*Service, error) {
@@ -64,8 +64,8 @@ func (s *Service) Process(stream extprocv3.ExternalProcessor_ProcessServer) erro
 	defer func() {
 		state.Close()
 		state.EnsureFinalAllow()
-		s.recorder.Record(state.Request(), state.FinalResult())
-		observe.LogFinalResult(s.logger, state.Request(), state.ProfileName(), state.FinalResult(), state.Outcomes())
+		s.recorder.Record(state.Request(), state.EngineMode(), state.FinalResult())
+		observe.LogFinalResult(s.logger, state.Request(), state.ProfileName(), state.EngineMode(), state.FinalResult(), state.Outcomes())
 	}()
 
 	for {
@@ -109,13 +109,13 @@ func (s *Service) handleMessage(state *streamState, msg *extprocv3.ProcessingReq
 		profileName, profile := s.resolver.Resolve(msg)
 		state.SetProfile(profileName, profile)
 
-		parsed := protoio.ParseRequestHeaders(req.RequestHeaders, profile.Mode)
+		parsed := protoio.ParseRequestHeaders(req.RequestHeaders)
 		state.SetRequest(parsed)
 
 		result := state.ProcessRequestHeaders()
 		resolved := state.FinalizeAction(model.ActionRequestHeaders, result)
 		if resolved.Decision == model.DecisionDeny || resolved.Decision == model.DecisionError {
-			return resolved, protoio.ResponseForAction(model.ActionRequestHeaders, state.Request().Mode, resolved)
+			return resolved, protoio.ResponseForAction(model.ActionRequestHeaders, state.EngineMode(), resolved)
 		}
 
 		// Envoy can send request headers with end_of_stream=true for bodyless requests.
@@ -123,21 +123,21 @@ func (s *Service) handleMessage(state *streamState, msg *extprocv3.ProcessingReq
 		if req.RequestHeaders.GetEndOfStream() {
 			bodyResult, _ := state.EnsureRequestBodyFinalized()
 			bodyResolved := state.FinalizeAction(model.ActionRequestBody, bodyResult)
-			return bodyResolved, protoio.ResponseForAction(model.ActionRequestHeaders, state.Request().Mode, bodyResolved)
+			return bodyResolved, protoio.ResponseForAction(model.ActionRequestHeaders, state.EngineMode(), bodyResolved)
 		}
 
-		return resolved, protoio.ResponseForAction(model.ActionRequestHeaders, state.Request().Mode, resolved)
+		return resolved, protoio.ResponseForAction(model.ActionRequestHeaders, state.EngineMode(), resolved)
 
 	case *extprocv3.ProcessingRequest_RequestBody:
 		result := state.ProcessRequestBody(req.RequestBody.GetBody(), req.RequestBody.GetEndOfStream())
 		resolved := state.FinalizeAction(model.ActionRequestBody, result)
-		return resolved, protoio.ResponseForAction(model.ActionRequestBody, state.Request().Mode, resolved)
+		return resolved, protoio.ResponseForAction(model.ActionRequestBody, state.EngineMode(), resolved)
 
 	case *extprocv3.ProcessingRequest_ResponseHeaders:
 		if bodyResult, finalized := state.EnsureRequestBodyFinalized(); finalized {
 			bodyResolved := state.FinalizeAction(model.ActionRequestBody, bodyResult)
 			if bodyResolved.Decision == model.DecisionDeny || bodyResolved.Decision == model.DecisionError {
-				return bodyResolved, protoio.ResponseForAction(model.ActionResponseHeaders, state.Request().Mode, bodyResolved)
+				return bodyResolved, protoio.ResponseForAction(model.ActionResponseHeaders, state.EngineMode(), bodyResolved)
 			}
 		}
 
@@ -147,7 +147,7 @@ func (s *Service) handleMessage(state *streamState, msg *extprocv3.ProcessingReq
 		if req.ResponseHeaders.GetEndOfStream() {
 			state.MarkStreamClosed()
 		}
-		return resolved, protoio.ResponseForAction(model.ActionResponseHeaders, state.Request().Mode, resolved)
+		return resolved, protoio.ResponseForAction(model.ActionResponseHeaders, state.EngineMode(), resolved)
 
 	case *extprocv3.ProcessingRequest_ResponseBody:
 		result := state.ProcessResponseBody(req.ResponseBody.GetBody(), req.ResponseBody.GetEndOfStream())
@@ -155,7 +155,7 @@ func (s *Service) handleMessage(state *streamState, msg *extprocv3.ProcessingReq
 		if req.ResponseBody.GetEndOfStream() {
 			state.MarkStreamClosed()
 		}
-		return resolved, protoio.ResponseForAction(model.ActionResponseBody, state.Request().Mode, resolved)
+		return resolved, protoio.ResponseForAction(model.ActionResponseBody, state.EngineMode(), resolved)
 
 	case *extprocv3.ProcessingRequest_RequestTrailers:
 		allowed := model.Result{Decision: model.DecisionAllow}
@@ -173,13 +173,13 @@ func (s *Service) handleMessage(state *streamState, msg *extprocv3.ProcessingReq
 			Err:            errors.New("unsupported ext_proc request type"),
 		}
 		resolved := state.FinalizeAction(model.ActionUnknown, errResult)
-		return resolved, protoio.ResponseForAction(model.ActionUnknown, state.Request().Mode, resolved)
+		return resolved, protoio.ResponseForAction(model.ActionUnknown, state.EngineMode(), resolved)
 	}
 }
 
 type noopRecorder struct{}
 
-func (noopRecorder) Record(model.Request, model.Result) {}
+func (noopRecorder) Record(model.Request, model.EngineMode, model.Result) {}
 
 func shouldIgnoreRecvError(err error, state *streamState) bool {
 	if err == nil || state == nil {

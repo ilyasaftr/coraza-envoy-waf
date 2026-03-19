@@ -8,24 +8,8 @@ import (
 	"github.com/ilyasaftr/coraza-envoy-waf/internal/model"
 )
 
-func TestFinalizeActionOnErrorDenyReturns503(t *testing.T) {
-	state := newStateWithOnError(model.ErrorPolicyDeny)
-
-	resolved := state.FinalizeAction(model.ActionRequestBody, model.Result{
-		Decision: model.DecisionError,
-		Err:      errors.New("synthetic failure"),
-	})
-
-	if resolved.Decision != model.DecisionError {
-		t.Fatalf("expected error decision, got %q", resolved.Decision)
-	}
-	if resolved.HTTPStatusCode != 503 {
-		t.Fatalf("expected status 503, got %d", resolved.HTTPStatusCode)
-	}
-}
-
-func TestFinalizeActionOnErrorAllowContinues(t *testing.T) {
-	state := newStateWithOnError(model.ErrorPolicyAllow)
+func TestFinalizeActionHardcodedFailOpenContinues(t *testing.T) {
+	state := newState()
 
 	resolved := state.FinalizeAction(model.ActionRequestBody, model.Result{
 		Decision: model.DecisionError,
@@ -38,10 +22,31 @@ func TestFinalizeActionOnErrorAllowContinues(t *testing.T) {
 	if resolved.HTTPStatusCode != 0 {
 		t.Fatalf("expected cleared status code, got %d", resolved.HTTPStatusCode)
 	}
+	outcomes := state.Outcomes()
+	if len(outcomes) != 1 || outcomes[0].Error == "" {
+		t.Fatalf("expected error outcome to be recorded, got %+v", outcomes)
+	}
+}
+
+func TestFinalizeActionUnknownKeepsError(t *testing.T) {
+	state := newState()
+
+	resolved := state.FinalizeAction(model.ActionUnknown, model.Result{
+		Decision:       model.DecisionError,
+		HTTPStatusCode: 503,
+		Err:            errors.New("unsupported message"),
+	})
+
+	if resolved.Decision != model.DecisionError {
+		t.Fatalf("expected error decision, got %q", resolved.Decision)
+	}
+	if resolved.HTTPStatusCode != 503 {
+		t.Fatalf("expected status 503, got %d", resolved.HTTPStatusCode)
+	}
 }
 
 func TestCaptureResultPrefersDeny(t *testing.T) {
-	state := newStateWithOnError(model.ErrorPolicyDeny)
+	state := newState()
 
 	state.CaptureResult(model.Result{Decision: model.DecisionAllow})
 	state.CaptureResult(model.Result{Decision: model.DecisionDeny, HTTPStatusCode: 403})
@@ -55,11 +60,8 @@ func TestCaptureResultPrefersDeny(t *testing.T) {
 func TestEnsureRequestBodyFinalizedRunsOnce(t *testing.T) {
 	stub := &countingSession{}
 	state := NewStreamState("default", runtime.ProfileRuntime{
-		Name: "default",
-		Mode: model.ModeBlock,
-		OnError: model.OnErrorPolicy{
-			Default: model.ErrorPolicyDeny,
-		},
+		Name:       "default",
+		EngineMode: model.EngineModeBlock,
 		NewSession: func(model.Request) runtime.Session {
 			return stub
 		},
@@ -82,13 +84,10 @@ func TestEnsureRequestBodyFinalizedRunsOnce(t *testing.T) {
 	}
 }
 
-func newStateWithOnError(policy model.ErrorPolicy) *StreamState {
+func newState() *StreamState {
 	return NewStreamState("default", runtime.ProfileRuntime{
-		Name: "default",
-		Mode: model.ModeDetect,
-		OnError: model.OnErrorPolicy{
-			Default: policy,
-		},
+		Name:       "default",
+		EngineMode: model.EngineModeDetect,
 		NewSession: func(model.Request) runtime.Session {
 			return noopSession{}
 		},

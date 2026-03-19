@@ -5,15 +5,15 @@ A gRPC `ext_proc` service that inspects HTTP requests and responses using [Coraz
 ## Features
 
 - Full request and response inspection (headers + body)
-- Two WAF modes: `detect` (log only) and `block` (deny with HTTP 403)
-- Configurable error handling per processing phase (`allow` or `deny`)
+- Coraza-native engine modes via `SecRuleEngine On|DetectionOnly|Off`
+- Service-internal action errors are hardcoded fail-open and still logged
 - Prometheus metrics and health endpoint
 - No Proxy-WASM required
 
 ## Performance Build
 
 - Default Docker/CI builds now use CGO with `memoize_builders,coraza.rule.no_regex_multiline,re2_cgo,libinjection_cgo`.
-- The service contract stays the same (`ext_proc` decisions, deny headers/details, profile resolution, and fail-closed semantics).
+- The service contract stays the same for `ext_proc` decisions, deny headers/details, and profile resolution.
 - Before promoting a perf image, run the contract checks and confirm the deny envelope still matches current behavior:
   - Ensure native deps are installed (`re2` + `libinjection`) or run inside the project CI workflow.
   - `go test -tags "memoize_builders,coraza.rule.no_regex_multiline,re2_cgo,libinjection_cgo" ./...`
@@ -37,38 +37,49 @@ A gRPC `ext_proc` service that inspects HTTP requests and responses using [Coraz
 default_profile: default
 profiles:
   default:
-    mode: detect
-    blocking_paranoia_level: 1
+    directives: |
+      Include @coraza.conf-recommended
+      SecRuleEngine DetectionOnly
+      SecRequestBodyAccess On
+      SecRequestBodyLimit 1048576
+      SecRequestBodyLimitAction Reject
+      SecResponseBodyAccess On
+      SecResponseBodyLimit 1048576
+      SecResponseBodyLimitAction Reject
+      Include @crs-setup.conf.example
+      SecAction "id:10000001,phase:1,pass,nolog,t:none,setvar:tx.blocking_paranoia_level=1"
+      SecAction "id:10000002,phase:1,pass,nolog,t:none,setvar:tx.inbound_anomaly_score_threshold=10"
+      SecAction "id:10000003,phase:1,pass,nolog,t:none,setvar:tx.outbound_anomaly_score_threshold=8"
+      Include @owasp_crs/*.conf
+      SecRuleRemoveById 941130
   strict:
-    mode: block
-    early_blocking: true
-    blocking_paranoia_level: 1
-    excluded_rule_ids: [941130]
-    inbound_anomaly_score_threshold: 5
-    outbound_anomaly_score_threshold: 5
-    request_body_limit_bytes: 1048576
-    response_body_limit_bytes: 1048576
-    response_body_mime_types: [text/plain, text/html, text/xml, application/json]
-    on_error:
-      default: deny
-      request_body: allow
+    directives: |
+      Include @coraza.conf-recommended
+      SecRuleEngine On
+      SecRequestBodyAccess On
+      SecRequestBodyLimit 1048576
+      SecRequestBodyLimitAction Reject
+      SecResponseBodyAccess On
+      SecResponseBodyLimit 1048576
+      SecResponseBodyLimitAction Reject
+      SecResponseBodyMimeType text/plain text/html text/xml application/json
+      Include @crs-setup.conf.example
+      SecAction "id:10000101,phase:1,pass,nolog,t:none,setvar:tx.blocking_paranoia_level=1"
+      SecAction "id:10000102,phase:1,pass,nolog,t:none,setvar:tx.inbound_anomaly_score_threshold=5"
+      SecAction "id:10000103,phase:1,pass,nolog,t:none,setvar:tx.outbound_anomaly_score_threshold=4"
+      SecAction "id:10000104,phase:1,pass,nolog,t:none,setvar:tx.early_blocking=1"
+      Include @owasp_crs/*.conf
 ```
 
-Full options:
+Profile contract:
 
 | Field | Values | Description |
 |---|---|---|
-| `mode` | `detect` \| `block` | Detect logs interruptions; block denies with 403 |
-| `early_blocking` | `true` \| `false` | Enables CRS early blocking (`tx.early_blocking=1`) for the profile |
-| `blocking_paranoia_level` | `1..4` | CRS blocking paranoia level for the profile |
-| `detection_paranoia_level` | `1..4` | Optional CRS detection paranoia level; must be greater than or equal to `blocking_paranoia_level` |
-| `on_error.default` | `allow` \| `deny` | Response when a processing error occurs |
-| `excluded_rule_ids` | list of ints | Rule IDs to skip |
-| `inbound_anomaly_score_threshold` | int | Anomaly score limit for requests |
-| `outbound_anomaly_score_threshold` | int | Anomaly score limit for responses |
-| `request_body_limit_bytes` | int | Max request body size to inspect |
-| `response_body_limit_bytes` | int | Max response body size to inspect |
-| `response_body_mime_types` | list of MIME types | Optional override for `SecResponseBodyMimeType` per profile |
+| `directives` | multiline Coraza directives | Required. Must contain exactly one explicit `SecRuleEngine On`, `SecRuleEngine DetectionOnly`, or `SecRuleEngine Off` |
 
-When `response_body_mime_types` is not set for a profile, the service keeps Coraza recommended defaults from `@coraza.conf-recommended`.
-Response body limit handling is enforced with `SecResponseBodyLimitAction Reject`.
+Notes:
+
+- `profiles.yaml` is now the only WAF configuration source. Thresholds, exclusions, paranoia, body limits, MIME handling, early blocking, and custom rules all live inside `directives`.
+- If you include `@coraza.conf-recommended`, place your explicit `SecRuleEngine` after it. The recommended file defaults to `DetectionOnly`.
+- Service-internal action errors are hardcoded fail-open. They remain visible in structured logs but no longer have a configurable `on_error` policy.
+- Threshold logging derives values from raw directives (`threshold_source=profile_directive`) and falls back to embedded CRS defaults (`threshold_source=crs_default`) when no override is present.

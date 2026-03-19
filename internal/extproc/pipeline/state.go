@@ -14,7 +14,6 @@ type ActionOutcome struct {
 	HTTPStatusCode  int
 	Interrupted     bool
 	RuleID          string
-	OnErrorPolicy   model.ErrorPolicy
 	Error           string
 	AnomalyScore    *int
 	Threshold       *int
@@ -41,7 +40,6 @@ func NewStreamState(defaultProfileName string, defaultProfile runtime.ProfileRun
 			Method:   "GET",
 			Path:     "/",
 			Protocol: "HTTP/1.1",
-			Mode:     defaultProfile.Mode,
 		},
 		profileName: defaultProfileName,
 		profile:     defaultProfile,
@@ -63,6 +61,10 @@ func (s *StreamState) Request() model.Request {
 
 func (s *StreamState) ProfileName() string {
 	return s.profileName
+}
+
+func (s *StreamState) EngineMode() model.EngineMode {
+	return s.profile.EngineMode
 }
 
 func (s *StreamState) Outcomes() []ActionOutcome {
@@ -185,19 +187,14 @@ func (s *StreamState) ProcessResponseBody(body []byte, endOfStream bool) model.R
 
 func (s *StreamState) FinalizeAction(action model.ProcessingAction, rawResult model.Result) model.Result {
 	resolvedResult := rawResult
-	onErrorPolicy := s.profile.OnError.Resolve(action)
-	if rawResult.Decision == model.DecisionError {
-		if onErrorPolicy == model.ErrorPolicyAllow {
-			resolvedResult.Decision = model.DecisionAllow
-			resolvedResult.HTTPStatusCode = 0
-			resolvedResult.Body = ""
-		} else {
-			resolvedResult.HTTPStatusCode = 503
-		}
+	if rawResult.Decision == model.DecisionError && shouldFailOpenAction(action) {
+		resolvedResult.Decision = model.DecisionAllow
+		resolvedResult.HTTPStatusCode = 0
+		resolvedResult.Body = ""
 	}
 
 	threshold := s.profile.ThresholdForAction(action)
-	s.outcomes = append(s.outcomes, buildActionOutcome(action, rawResult, resolvedResult, onErrorPolicy, threshold))
+	s.outcomes = append(s.outcomes, buildActionOutcome(action, rawResult, resolvedResult, threshold))
 	return resolvedResult
 }
 
@@ -212,7 +209,6 @@ func buildActionOutcome(
 	action model.ProcessingAction,
 	rawResult model.Result,
 	resolvedResult model.Result,
-	onErrorPolicy model.ErrorPolicy,
 	threshold model.ThresholdInfo,
 ) ActionOutcome {
 	var ruleID string
@@ -228,7 +224,6 @@ func buildActionOutcome(
 		HTTPStatusCode:  resolvedResult.HTTPStatusCode,
 		Interrupted:     rawResult.Interruption != nil,
 		RuleID:          ruleID,
-		OnErrorPolicy:   onErrorPolicy,
 		ThresholdSource: threshold.Source,
 	}
 
@@ -244,4 +239,13 @@ func buildActionOutcome(
 	}
 
 	return outcome
+}
+
+func shouldFailOpenAction(action model.ProcessingAction) bool {
+	switch action {
+	case model.ActionRequestHeaders, model.ActionRequestBody, model.ActionResponseHeaders, model.ActionResponseBody:
+		return true
+	default:
+		return false
+	}
 }

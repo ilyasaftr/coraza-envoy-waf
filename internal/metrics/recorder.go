@@ -48,10 +48,10 @@ func NewPrometheusRecorder(registerer prometheus.Registerer) (*PrometheusRecorde
 	return recorder, nil
 }
 
-func (r *PrometheusRecorder) Record(req model.Request, result model.Result) {
-	mode := string(req.Mode)
+func (r *PrometheusRecorder) Record(_ model.Request, engineMode model.EngineMode, result model.Result) {
+	mode := string(engineMode)
 	if mode == "" {
-		mode = string(model.ModeDetect)
+		mode = string(model.EngineModeDetect)
 	}
 
 	decision := string(result.Decision)
@@ -71,4 +71,4 @@ func (r *PrometheusRecorder) Record(req model.Request, result model.Result) {
 
 type NoopRecorder struct{}
 
-func (NoopRecorder) Record(_ model.Request, _ model.Result) {}
+func (NoopRecorder) Record(_ model.Request, _ model.EngineMode, _ model.Result) {}

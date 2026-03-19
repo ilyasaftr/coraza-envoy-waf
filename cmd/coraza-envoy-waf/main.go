@@ -97,25 +97,12 @@ func main() {
 func buildProfileRuntimes(cfg config.Config, logger *slog.Logger) (map[string]extproc.ProfileRuntime, error) {
 	profiles := make(map[string]extproc.ProfileRuntime, len(cfg.Profiles))
 	for name, profile := range cfg.Profiles {
-		evaluator, err := waf.NewEvaluatorWithOptions(
-			profile.RequestBodyLimit,
-			profile.ResponseBodyLimit,
-			waf.RuntimeOptions{
-				BlockingParanoiaLevel:    profile.BlockingParanoiaLevel,
-				DetectionParanoiaLevel:   profile.DetectionParanoiaLevel,
-				ExcludedRuleIDs:          profile.ExcludedRuleIDs,
-				InboundAnomalyThreshold:  profile.InboundAnomalyThreshold,
-				OutboundAnomalyThreshold: profile.OutboundAnomalyThreshold,
-				ResponseBodyMIMETypes:    profile.ResponseBodyMIMETypes,
-				EarlyBlocking:            profile.EarlyBlocking,
-			},
-			logger,
-		)
+		evaluator, err := waf.NewEvaluatorWithDirectives(profile.Directives, logger)
 		if err != nil {
 			return nil, fmt.Errorf("profile %q: %w", name, err)
 		}
 
-		runtime, err := extproc.NewProfileRuntime(name, evaluator, profile.Mode, profile.OnError)
+		runtime, err := extproc.NewProfileRuntime(name, evaluator, profile.EngineMode)
 		if err != nil {
 			return nil, fmt.Errorf("profile %q: %w", name, err)
 		}

@@ -4,7 +4,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 
@@ -16,7 +15,10 @@ func TestLoadDefaultsFromProfilesYAML(t *testing.T) {
 default_profile: default
 profiles:
   default:
-    mode: block
+    directives: |
+      Include @coraza.conf-recommended
+      SecRuleEngine On
+      Include @owasp_crs/*.conf
 `)
 
 	t.Setenv(EnvGRPCBind, "")
@@ -45,47 +47,31 @@ profiles:
 	}
 
 	profile := cfg.Profiles["default"]
-	if profile.Mode != model.ModeBlock {
-		t.Fatalf("unexpected mode: %q", profile.Mode)
+	if profile.EngineMode != model.EngineModeBlock {
+		t.Fatalf("unexpected mode: %q", profile.EngineMode)
 	}
-	if profile.RequestBodyLimit != 1048576 {
-		t.Fatalf("unexpected request body limit: %d", profile.RequestBodyLimit)
-	}
-	if profile.ResponseBodyLimit != 1048576 {
-		t.Fatalf("unexpected response body limit: %d", profile.ResponseBodyLimit)
-	}
-	if profile.OnError.Default != model.ErrorPolicyDeny {
-		t.Fatalf("unexpected on_error default: %q", profile.OnError.Default)
-	}
-	if len(profile.OnError.Overrides) != 0 {
-		t.Fatalf("unexpected on_error overrides: %+v", profile.OnError.Overrides)
+	if !strings.Contains(profile.Directives, "SecRuleEngine On") {
+		t.Fatalf("expected directives to be preserved, got: %s", profile.Directives)
 	}
 }
 
-func TestLoadCustomProfileValues(t *testing.T) {
+func TestLoadCustomDirectivesDeriveDetectionOnlyMode(t *testing.T) {
 	profilesPath := writeProfilesFile(t, `
 default_profile: strict
 profiles:
   strict:
-    mode: block
-    early_blocking: true
-    blocking_paranoia_level: 2
-    detection_paranoia_level: 3
-    excluded_rule_ids: [942100, 941130, 942100]
-    inbound_anomaly_score_threshold: 9
-    outbound_anomaly_score_threshold: 7
-    request_body_limit_bytes: 4096
-    response_body_limit_bytes: 8192
-    response_body_mime_types: [application/json, text/plain, application/json]
-    on_error:
-      default: allow
-      request_body: deny
-      response_body: allow
+    directives: |
+      Include @coraza.conf-recommended
+      SecRuleEngine DetectionOnly
+      Include @crs-setup.conf.example
+      SecAction "id:10000001,phase:1,pass,nolog,setvar:tx.inbound_anomaly_score_threshold=9"
+      Include @owasp_crs/*.conf
 `)
 
 	t.Setenv(EnvGRPCBind, "127.0.0.1:10000")
 	t.Setenv(EnvMetricsBind, "127.0.0.1:10001")
 	t.Setenv(EnvLogLevel, "debug")
+	t.Setenv(EnvGRPCNumStreamWorkers, "4")
 	t.Setenv(EnvWAFProfilesPath, profilesPath)
 
 	cfg, err := Load()
@@ -101,60 +87,13 @@ profiles:
 	if cfg.LogLevel != slog.LevelDebug {
 		t.Fatalf("unexpected log level: %v", cfg.LogLevel)
 	}
-	t.Setenv(EnvGRPCNumStreamWorkers, "4")
-	cfg, err = Load()
-	if err != nil {
-		t.Fatalf("load config with grpc stream workers: %v", err)
-	}
 	if cfg.GRPCStreamWorkers != 4 {
 		t.Fatalf("unexpected grpc stream workers: %d", cfg.GRPCStreamWorkers)
 	}
-	if cfg.DefaultProfile != "strict" {
-		t.Fatalf("unexpected default profile: %q", cfg.DefaultProfile)
-	}
 
 	profile := cfg.Profiles["strict"]
-	if profile.Mode != model.ModeBlock {
-		t.Fatalf("unexpected mode: %q", profile.Mode)
-	}
-	if !profile.EarlyBlocking {
-		t.Fatal("expected early_blocking to be enabled")
-	}
-	if profile.BlockingParanoiaLevel == nil || *profile.BlockingParanoiaLevel != 2 {
-		t.Fatalf("unexpected blocking paranoia level: %+v", profile.BlockingParanoiaLevel)
-	}
-	if profile.DetectionParanoiaLevel == nil || *profile.DetectionParanoiaLevel != 3 {
-		t.Fatalf("unexpected detection paranoia level: %+v", profile.DetectionParanoiaLevel)
-	}
-	if profile.RequestBodyLimit != 4096 {
-		t.Fatalf("unexpected request body limit: %d", profile.RequestBodyLimit)
-	}
-	if profile.ResponseBodyLimit != 8192 {
-		t.Fatalf("unexpected response body limit: %d", profile.ResponseBodyLimit)
-	}
-	if !reflect.DeepEqual(profile.ResponseBodyMIMETypes, []string{"application/json", "text/plain"}) {
-		t.Fatalf("unexpected response body mime types: %+v", profile.ResponseBodyMIMETypes)
-	}
-	if !reflect.DeepEqual(profile.ExcludedRuleIDs, []int{941130, 942100}) {
-		t.Fatalf("unexpected excluded rule ids: %+v", profile.ExcludedRuleIDs)
-	}
-	if profile.InboundAnomalyThreshold == nil || *profile.InboundAnomalyThreshold != 9 {
-		t.Fatalf("unexpected inbound threshold: %+v", profile.InboundAnomalyThreshold)
-	}
-	if profile.OutboundAnomalyThreshold == nil || *profile.OutboundAnomalyThreshold != 7 {
-		t.Fatalf("unexpected outbound threshold: %+v", profile.OutboundAnomalyThreshold)
-	}
-	if profile.OnError.Default != model.ErrorPolicyAllow {
-		t.Fatalf("unexpected on_error default: %q", profile.OnError.Default)
-	}
-	if profile.OnError.Resolve(model.ActionRequestBody) != model.ErrorPolicyDeny {
-		t.Fatalf("unexpected request body policy: %q", profile.OnError.Resolve(model.ActionRequestBody))
-	}
-	if profile.OnError.Resolve(model.ActionResponseBody) != model.ErrorPolicyAllow {
-		t.Fatalf("unexpected response body policy: %q", profile.OnError.Resolve(model.ActionResponseBody))
-	}
-	if profile.OnError.Resolve(model.ActionRequestHeaders) != model.ErrorPolicyAllow {
-		t.Fatalf("unexpected inherited request headers policy: %q", profile.OnError.Resolve(model.ActionRequestHeaders))
+	if profile.EngineMode != model.EngineModeDetect {
+		t.Fatalf("unexpected mode: %q", profile.EngineMode)
 	}
 }
 
@@ -169,7 +108,8 @@ func TestLoadFailsWhenDefaultProfileMissing(t *testing.T) {
 	profilesPath := writeProfilesFile(t, `
 profiles:
   strict:
-    mode: block
+    directives: |
+      SecRuleEngine On
 `)
 	t.Setenv(EnvWAFProfilesPath, profilesPath)
 	if _, err := Load(); err == nil {
@@ -182,7 +122,8 @@ func TestLoadFailsWhenDefaultProfileUnknown(t *testing.T) {
 default_profile: missing
 profiles:
   strict:
-    mode: block
+    directives: |
+      SecRuleEngine On
 `)
 	t.Setenv(EnvWAFProfilesPath, profilesPath)
 	if _, err := Load(); err == nil {
@@ -190,44 +131,59 @@ profiles:
 	}
 }
 
-func TestLoadInvalidModeFails(t *testing.T) {
+func TestLoadMissingDirectivesFails(t *testing.T) {
 	profilesPath := writeProfilesFile(t, `
 default_profile: strict
 profiles:
-  strict:
-    mode: aggressive
+  strict: {}
 `)
 	t.Setenv(EnvWAFProfilesPath, profilesPath)
 	if _, err := Load(); err == nil {
-		t.Fatal("expected invalid mode error")
+		t.Fatal("expected missing directives error")
 	}
 }
 
-func TestLoadInvalidRuleIDFails(t *testing.T) {
+func TestLoadMissingSecRuleEngineFails(t *testing.T) {
 	profilesPath := writeProfilesFile(t, `
 default_profile: strict
 profiles:
   strict:
-    mode: block
-    excluded_rule_ids: [941130, -1]
+    directives: |
+      Include @coraza.conf-recommended
+      Include @owasp_crs/*.conf
 `)
 	t.Setenv(EnvWAFProfilesPath, profilesPath)
 	if _, err := Load(); err == nil {
-		t.Fatal("expected invalid excluded rule id error")
+		t.Fatal("expected missing SecRuleEngine error")
 	}
 }
 
-func TestLoadInvalidThresholdFails(t *testing.T) {
+func TestLoadMultipleSecRuleEngineFails(t *testing.T) {
 	profilesPath := writeProfilesFile(t, `
 default_profile: strict
 profiles:
   strict:
-    mode: block
-    inbound_anomaly_score_threshold: -1
+    directives: |
+      SecRuleEngine DetectionOnly
+      SecRuleEngine On
 `)
 	t.Setenv(EnvWAFProfilesPath, profilesPath)
 	if _, err := Load(); err == nil {
-		t.Fatal("expected invalid threshold error")
+		t.Fatal("expected duplicate SecRuleEngine error")
+	}
+}
+
+func TestLoadInvalidSecRuleEngineFails(t *testing.T) {
+	profilesPath := writeProfilesFile(t, `
+default_profile: strict
+profiles:
+  strict:
+    directives: |
+      SecRuleEngine Aggressive
+`)
+	t.Setenv(EnvWAFProfilesPath, profilesPath)
+	if _, err := Load(); err == nil {
+		t.Fatal("expected invalid SecRuleEngine error")
 	}
 }
 
@@ -236,111 +192,13 @@ func TestLoadInvalidGRPCNumStreamWorkersFails(t *testing.T) {
 default_profile: strict
 profiles:
   strict:
-    mode: block
+    directives: |
+      SecRuleEngine On
 `)
 	t.Setenv(EnvWAFProfilesPath, profilesPath)
 	t.Setenv(EnvGRPCNumStreamWorkers, "-1")
 	if _, err := Load(); err == nil {
 		t.Fatal("expected invalid grpc num stream workers error")
-	}
-}
-
-func TestLoadInvalidBlockingParanoiaLevelFails(t *testing.T) {
-	profilesPath := writeProfilesFile(t, `
-default_profile: strict
-profiles:
-  strict:
-    mode: block
-    blocking_paranoia_level: 5
-`)
-	t.Setenv(EnvWAFProfilesPath, profilesPath)
-	if _, err := Load(); err == nil {
-		t.Fatal("expected invalid blocking paranoia level error")
-	}
-}
-
-func TestLoadInvalidDetectionParanoiaLevelFails(t *testing.T) {
-	profilesPath := writeProfilesFile(t, `
-default_profile: strict
-profiles:
-  strict:
-    mode: block
-    detection_paranoia_level: 0
-`)
-	t.Setenv(EnvWAFProfilesPath, profilesPath)
-	if _, err := Load(); err == nil {
-		t.Fatal("expected invalid detection paranoia level error")
-	}
-}
-
-func TestLoadDetectionParanoiaLevelMustNotBeLowerThanBlocking(t *testing.T) {
-	profilesPath := writeProfilesFile(t, `
-default_profile: strict
-profiles:
-  strict:
-    mode: block
-    blocking_paranoia_level: 3
-    detection_paranoia_level: 2
-`)
-	t.Setenv(EnvWAFProfilesPath, profilesPath)
-	if _, err := Load(); err == nil {
-		t.Fatal("expected invalid detection paranoia level ordering error")
-	}
-}
-
-func TestLoadInvalidOnErrorFails(t *testing.T) {
-	profilesPath := writeProfilesFile(t, `
-default_profile: strict
-profiles:
-  strict:
-    mode: block
-    on_error:
-      request_headers: continue
-`)
-	t.Setenv(EnvWAFProfilesPath, profilesPath)
-	if _, err := Load(); err == nil {
-		t.Fatal("expected invalid on_error value error")
-	}
-}
-
-func TestLoadInvalidResponseBodyMIMETypeFails(t *testing.T) {
-	profilesPath := writeProfilesFile(t, `
-default_profile: strict
-profiles:
-  strict:
-    mode: block
-    response_body_mime_types:
-      - ""
-`)
-	t.Setenv(EnvWAFProfilesPath, profilesPath)
-	if _, err := Load(); err == nil {
-		t.Fatal("expected invalid response_body_mime_types error")
-	}
-}
-
-func TestLoadLegacyBehaviorEnvVarsDoNotAffectProfiles(t *testing.T) {
-	profilesPath := writeProfilesFile(t, `
-default_profile: strict
-profiles:
-  strict:
-    mode: block
-`)
-
-	t.Setenv(EnvWAFProfilesPath, profilesPath)
-	t.Setenv("WAF_MODE", "detect")
-	t.Setenv("WAF_ON_ERROR_DEFAULT", "allow")
-	t.Setenv("WAF_EXCLUDED_RULE_IDS", "942100")
-	t.Setenv("WAF_INBOUND_ANOMALY_SCORE_THRESHOLD", "99")
-
-	cfg, err := Load()
-	if err != nil {
-		t.Fatalf("load config: %v", err)
-	}
-	if cfg.Profiles["strict"].Mode != model.ModeBlock {
-		t.Fatalf("expected profile mode from yaml, got %q", cfg.Profiles["strict"].Mode)
-	}
-	if cfg.Profiles["strict"].OnError.Default != model.ErrorPolicyDeny {
-		t.Fatalf("expected on_error default from yaml parsing defaults, got %q", cfg.Profiles["strict"].OnError.Default)
 	}
 }
 

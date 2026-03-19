@@ -10,7 +10,7 @@ import (
 )
 
 func TestImmediateDenyResponseUsesWAFHeaders(t *testing.T) {
-	resp := ImmediateDenyResponse(model.ModeBlock, model.Result{
+	resp := ImmediateDenyResponse(model.EngineModeBlock, model.Result{
 		Decision:       model.DecisionDeny,
 		HTTPStatusCode: 403,
 		Interruption: &model.Interruption{
@@ -33,7 +33,7 @@ func TestImmediateDenyResponseUsesWAFHeaders(t *testing.T) {
 		headers[header.GetHeader().GetKey()] = string(header.GetHeader().GetRawValue())
 	}
 
-	if got := headers["x-waf-mode"]; got != string(model.ModeBlock) {
+	if got := headers["x-waf-mode"]; got != string(model.EngineModeBlock) {
 		t.Fatalf("expected x-waf-mode=block, got %q", got)
 	}
 	if got := headers["x-waf-rule-id"]; got != "942100" {
@@ -42,7 +42,7 @@ func TestImmediateDenyResponseUsesWAFHeaders(t *testing.T) {
 }
 
 func TestResponseForUnknownActionReturnsInternalError(t *testing.T) {
-	resp := ResponseForAction(model.ActionUnknown, model.ModeBlock, model.Result{
+	resp := ResponseForAction(model.ActionUnknown, model.EngineModeBlock, model.Result{
 		Decision: model.DecisionAllow,
 	})
 	immediate := resp.GetImmediateResponse()
@@ -66,7 +66,7 @@ func TestParseRequestHeaders(t *testing.T) {
 				{Key: "content-type", RawValue: []byte("application/json")},
 			},
 		},
-	}, model.ModeDetect)
+	})
 
 	if request.Method != "POST" {
 		t.Fatalf("expected method POST, got %q", request.Method)

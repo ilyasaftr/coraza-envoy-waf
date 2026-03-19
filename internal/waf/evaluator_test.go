@@ -9,8 +9,18 @@ import (
 	"github.com/ilyasaftr/coraza-envoy-waf/internal/model"
 )
 
-const testDirectives = `
+const blockDirectives = `
 SecRuleEngine On
+SecRule REQUEST_URI "@streq /blocked" "id:101,phase:1,deny,status:403"
+`
+
+const detectDirectives = `
+SecRuleEngine DetectionOnly
+SecRule REQUEST_URI "@streq /blocked" "id:101,phase:1,deny,status:403"
+`
+
+const offDirectives = `
+SecRuleEngine Off
 SecRule REQUEST_URI "@streq /blocked" "id:101,phase:1,deny,status:403"
 `
 
@@ -19,7 +29,7 @@ func newTestLogger() *slog.Logger {
 }
 
 func TestEvaluatorAllow(t *testing.T) {
-	evaluator, err := NewEvaluatorWithDirectives(4096, testDirectives, newTestLogger())
+	evaluator, err := NewEvaluatorWithDirectives(blockDirectives, newTestLogger())
 	if err != nil {
 		t.Fatalf("new evaluator: %v", err)
 	}
@@ -29,7 +39,6 @@ func TestEvaluatorAllow(t *testing.T) {
 		Method:   "GET",
 		Path:     "/ok",
 		Protocol: "HTTP/1.1",
-		Mode:     model.ModeDetect,
 	})
 	if result.Decision != model.DecisionAllow {
 		t.Fatalf("expected allow decision, got %q", result.Decision)
@@ -39,8 +48,8 @@ func TestEvaluatorAllow(t *testing.T) {
 	}
 }
 
-func TestEvaluatorInterruptionDetectModeAllows(t *testing.T) {
-	evaluator, err := NewEvaluatorWithDirectives(4096, testDirectives, newTestLogger())
+func TestEvaluatorDetectionOnlyAllows(t *testing.T) {
+	evaluator, err := NewEvaluatorWithDirectives(detectDirectives, newTestLogger())
 	if err != nil {
 		t.Fatalf("new evaluator: %v", err)
 	}
@@ -50,18 +59,17 @@ func TestEvaluatorInterruptionDetectModeAllows(t *testing.T) {
 		Method:   "GET",
 		Path:     "/blocked",
 		Protocol: "HTTP/1.1",
-		Mode:     model.ModeDetect,
 	})
 	if result.Decision != model.DecisionAllow {
-		t.Fatalf("expected allow decision in detect mode, got %q", result.Decision)
+		t.Fatalf("expected allow decision in detection only mode, got %q", result.Decision)
 	}
-	if result.Interruption == nil {
-		t.Fatal("expected interruption in detect mode")
+	if result.Interruption != nil {
+		t.Fatal("expected no interruption in detection only mode")
 	}
 }
 
-func TestEvaluatorInterruptionBlockModeDenies(t *testing.T) {
-	evaluator, err := NewEvaluatorWithDirectives(4096, testDirectives, newTestLogger())
+func TestEvaluatorOnDenies(t *testing.T) {
+	evaluator, err := NewEvaluatorWithDirectives(blockDirectives, newTestLogger())
 	if err != nil {
 		t.Fatalf("new evaluator: %v", err)
 	}
@@ -71,15 +79,31 @@ func TestEvaluatorInterruptionBlockModeDenies(t *testing.T) {
 		Method:   "GET",
 		Path:     "/blocked",
 		Protocol: "HTTP/1.1",
-		Mode:     model.ModeBlock,
 	})
 	if result.Decision != model.DecisionDeny {
-		t.Fatalf("expected deny decision in block mode, got %q", result.Decision)
+		t.Fatalf("expected deny decision, got %q", result.Decision)
 	}
 	if result.HTTPStatusCode != 403 {
 		t.Fatalf("expected HTTP 403, got %d", result.HTTPStatusCode)
 	}
 	if result.RuleID == "" {
 		t.Fatal("expected rule id in blocked response")
+	}
+}
+
+func TestEvaluatorOffSkipsRules(t *testing.T) {
+	evaluator, err := NewEvaluatorWithDirectives(offDirectives, newTestLogger())
+	if err != nil {
+		t.Fatalf("new evaluator: %v", err)
+	}
+
+	result := evaluator.Evaluate(context.Background(), model.Request{
+		ID:       "req-4",
+		Method:   "GET",
+		Path:     "/blocked",
+		Protocol: "HTTP/1.1",
+	})
+	if result.Decision != model.DecisionAllow {
+		t.Fatalf("expected allow decision, got %q", result.Decision)
 	}
 }

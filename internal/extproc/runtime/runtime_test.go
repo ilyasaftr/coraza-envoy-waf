@@ -75,8 +75,7 @@ func TestNormalizeProfilesSuccessNormalizesFields(t *testing.T) {
 	normalized, defaultName, err := NormalizeProfiles(
 		map[string]ProfileRuntime{
 			"default": {
-				Mode:       model.Mode(""),
-				OnError:    model.OnErrorPolicy{},
+				EngineMode: model.EngineMode(""),
 				NewSession: stubSessionFactory,
 			},
 		},
@@ -93,14 +92,8 @@ func TestNormalizeProfilesSuccessNormalizesFields(t *testing.T) {
 	if runtime.Name != "default" {
 		t.Fatalf("expected runtime name default, got %q", runtime.Name)
 	}
-	if runtime.Mode != model.ModeBlock {
-		t.Fatalf("expected mode fallback block, got %q", runtime.Mode)
-	}
-	if runtime.OnError.Default != model.ErrorPolicyDeny {
-		t.Fatalf("expected on_error default deny, got %q", runtime.OnError.Default)
-	}
-	if runtime.OnError.Overrides == nil {
-		t.Fatal("expected overrides map to be initialized")
+	if runtime.EngineMode != model.EngineModeBlock {
+		t.Fatalf("expected mode fallback block, got %q", runtime.EngineMode)
 	}
 
 	threshold := runtime.ThresholdForAction(model.ActionRequestHeaders)
@@ -109,22 +102,18 @@ func TestNormalizeProfilesSuccessNormalizesFields(t *testing.T) {
 	}
 }
 
-func TestNormalizeMode(t *testing.T) {
-	if got := NormalizeMode(model.ModeDetect); got != model.ModeDetect {
+func TestNormalizeEngineMode(t *testing.T) {
+	if got := NormalizeEngineMode(model.EngineModeDetect); got != model.EngineModeDetect {
 		t.Fatalf("expected detect mode, got %q", got)
 	}
-	if got := NormalizeMode(model.Mode("invalid")); got != model.ModeBlock {
+	if got := NormalizeEngineMode(model.EngineModeBlock); got != model.EngineModeBlock {
+		t.Fatalf("expected block mode, got %q", got)
+	}
+	if got := NormalizeEngineMode(model.EngineModeOff); got != model.EngineModeOff {
+		t.Fatalf("expected off mode, got %q", got)
+	}
+	if got := NormalizeEngineMode(model.EngineMode("invalid")); got != model.EngineModeBlock {
 		t.Fatalf("expected invalid mode fallback to block, got %q", got)
-	}
-}
-
-func TestNormalizeOnErrorPolicy(t *testing.T) {
-	normalized := NormalizeOnErrorPolicy(model.OnErrorPolicy{})
-	if normalized.Default != model.ErrorPolicyDeny {
-		t.Fatalf("expected default deny, got %q", normalized.Default)
-	}
-	if normalized.Overrides == nil {
-		t.Fatal("expected overrides map to be initialized")
 	}
 }
 

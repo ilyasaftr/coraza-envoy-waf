@@ -23,9 +23,9 @@ func TestLogFinalResultDenyOutcome(t *testing.T) {
 			Host:   "podinfo.klawu.com",
 			Path:   "/",
 			Method: "GET",
-			Mode:   model.ModeBlock,
 		},
 		"strict",
+		model.EngineModeBlock,
 		model.Result{
 			Decision:       model.DecisionDeny,
 			HTTPStatusCode: 403,
@@ -37,10 +37,9 @@ func TestLogFinalResultDenyOutcome(t *testing.T) {
 				HTTPStatusCode:  403,
 				Interrupted:     true,
 				RuleID:          "942100",
-				OnErrorPolicy:   model.ErrorPolicyDeny,
 				AnomalyScore:    &anomaly,
 				Threshold:       &threshold,
-				ThresholdSource: model.ThresholdSourceEnvOverride,
+				ThresholdSource: model.ThresholdSourceProfileDirective,
 			},
 		},
 	)
@@ -78,9 +77,9 @@ func TestLogFinalResultAllowOutcome(t *testing.T) {
 			Host:   "podinfo.klawu.com",
 			Path:   "/healthz",
 			Method: "GET",
-			Mode:   model.ModeDetect,
 		},
 		"default",
+		model.EngineModeDetect,
 		model.Result{
 			Decision: model.DecisionAllow,
 		},
@@ -89,7 +88,6 @@ func TestLogFinalResultAllowOutcome(t *testing.T) {
 				Action:          model.ActionRequestHeaders,
 				Decision:        model.DecisionAllow,
 				Interrupted:     false,
-				OnErrorPolicy:   model.ErrorPolicyDeny,
 				ThresholdSource: model.ThresholdSourceUnknown,
 			},
 		},
@@ -111,9 +109,9 @@ func TestLogFinalResultAllowOutcomeDebug(t *testing.T) {
 			Host:   "podinfo.klawu.com",
 			Path:   "/healthz",
 			Method: "GET",
-			Mode:   model.ModeDetect,
 		},
 		"default",
+		model.EngineModeDetect,
 		model.Result{
 			Decision: model.DecisionAllow,
 		},
@@ -122,7 +120,6 @@ func TestLogFinalResultAllowOutcomeDebug(t *testing.T) {
 				Action:          model.ActionRequestHeaders,
 				Decision:        model.DecisionAllow,
 				Interrupted:     false,
-				OnErrorPolicy:   model.ErrorPolicyDeny,
 				ThresholdSource: model.ThresholdSourceUnknown,
 			},
 		},
@@ -151,20 +148,17 @@ func TestLogFinalResultErrorOutcome(t *testing.T) {
 			Host:   "podinfo.klawu.com",
 			Path:   "/api",
 			Method: "POST",
-			Mode:   model.ModeBlock,
 		},
 		"strict",
+		model.EngineModeBlock,
 		model.Result{
-			Decision:       model.DecisionError,
-			HTTPStatusCode: 503,
-			Err:            errors.New("synthetic processor failure"),
+			Decision: model.DecisionAllow,
+			Err:      errors.New("synthetic processor failure"),
 		},
 		[]pipeline.ActionOutcome{
 			{
 				Action:          model.ActionRequestBody,
-				Decision:        model.DecisionError,
-				HTTPStatusCode:  503,
-				OnErrorPolicy:   model.ErrorPolicyDeny,
+				Decision:        model.DecisionAllow,
 				Error:           "synthetic processor failure",
 				ThresholdSource: model.ThresholdSourceUnknown,
 			},
@@ -172,8 +166,8 @@ func TestLogFinalResultErrorOutcome(t *testing.T) {
 	)
 
 	entry := handler.last()
-	if got := entry.attrs["final_status"]; got != int64(503) {
-		t.Fatalf("expected final_status 503, got %#v", got)
+	if _, exists := entry.attrs["final_status"]; exists {
+		t.Fatalf("did not expect final_status for hardcoded fail-open error, got %#v", entry.attrs["final_status"])
 	}
 	if got := entry.attrs["final_error"]; got != "synthetic processor failure" {
 		t.Fatalf("expected final_error, got %#v", got)

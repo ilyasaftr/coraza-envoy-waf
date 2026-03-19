@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"slices"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -15,7 +15,6 @@ import (
 const (
 	defaultGRPCBind = ":9002"
 	defaultHTTPBind = ":9090"
-	defaultBodySize = 1048576
 )
 
 const (
@@ -25,6 +24,8 @@ const (
 	EnvGRPCNumStreamWorkers = "GRPC_NUM_STREAM_WORKERS"
 	EnvWAFProfilesPath      = "WAF_PROFILES_PATH"
 )
+
+var secRuleEnginePattern = regexp.MustCompile(`(?im)^\s*SecRuleEngine\s+(On|Off|DetectionOnly)\s*(?:#.*)?$`)
 
 type Config struct {
 	GRPCBind          string
@@ -37,18 +38,9 @@ type Config struct {
 }
 
 type Profile struct {
-	Name                     string
-	Mode                     model.Mode
-	EarlyBlocking            bool
-	BlockingParanoiaLevel    *int
-	DetectionParanoiaLevel   *int
-	RequestBodyLimit         int
-	ResponseBodyLimit        int
-	ResponseBodyMIMETypes    []string
-	ExcludedRuleIDs          []int
-	InboundAnomalyThreshold  *int
-	OutboundAnomalyThreshold *int
-	OnError                  model.OnErrorPolicy
+	Name       string
+	Directives string
+	EngineMode model.EngineMode
 }
 
 type profilesFile struct {
@@ -57,25 +49,7 @@ type profilesFile struct {
 }
 
 type rawProfile struct {
-	Mode                     string     `yaml:"mode"`
-	EarlyBlocking            bool       `yaml:"early_blocking"`
-	BlockingParanoiaLevel    *int       `yaml:"blocking_paranoia_level"`
-	DetectionParanoiaLevel   *int       `yaml:"detection_paranoia_level"`
-	ExcludedRuleIDs          []int      `yaml:"excluded_rule_ids"`
-	InboundAnomalyThreshold  *int       `yaml:"inbound_anomaly_score_threshold"`
-	OutboundAnomalyThreshold *int       `yaml:"outbound_anomaly_score_threshold"`
-	RequestBodyLimitBytes    *int       `yaml:"request_body_limit_bytes"`
-	ResponseBodyLimitBytes   *int       `yaml:"response_body_limit_bytes"`
-	ResponseBodyMIMETypes    []string   `yaml:"response_body_mime_types"`
-	OnError                  rawOnError `yaml:"on_error"`
-}
-
-type rawOnError struct {
-	Default         string `yaml:"default"`
-	RequestHeaders  string `yaml:"request_headers"`
-	RequestBody     string `yaml:"request_body"`
-	ResponseHeaders string `yaml:"response_headers"`
-	ResponseBody    string `yaml:"response_body"`
+	Directives string `yaml:"directives"`
 }
 
 func Load() (Config, error) {
@@ -135,110 +109,42 @@ func Load() (Config, error) {
 }
 
 func normalizeProfile(name string, raw rawProfile) (Profile, error) {
-	mode, err := parseMode(raw.Mode)
-	if err != nil {
-		return Profile{}, fmt.Errorf("profiles.%s.mode: %w", name, err)
+	directives := strings.TrimSpace(raw.Directives)
+	if directives == "" {
+		return Profile{}, fmt.Errorf("profiles.%s.directives: is required", name)
 	}
 
-	blockingParanoiaLevel, err := normalizeOptionalParanoiaLevel(raw.BlockingParanoiaLevel)
+	engineMode, err := parseEngineModeFromDirectives(directives)
 	if err != nil {
-		return Profile{}, fmt.Errorf("profiles.%s.blocking_paranoia_level: %w", name, err)
-	}
-
-	detectionParanoiaLevel, err := normalizeOptionalParanoiaLevel(raw.DetectionParanoiaLevel)
-	if err != nil {
-		return Profile{}, fmt.Errorf("profiles.%s.detection_paranoia_level: %w", name, err)
-	}
-	if blockingParanoiaLevel != nil && detectionParanoiaLevel != nil && *detectionParanoiaLevel < *blockingParanoiaLevel {
-		return Profile{}, fmt.Errorf("profiles.%s.detection_paranoia_level: must be greater than or equal to blocking_paranoia_level", name)
-	}
-
-	excludedRuleIDs, err := normalizeRuleIDs(raw.ExcludedRuleIDs)
-	if err != nil {
-		return Profile{}, fmt.Errorf("profiles.%s.excluded_rule_ids: %w", name, err)
-	}
-
-	inboundThreshold, err := normalizeOptionalPositiveInt(raw.InboundAnomalyThreshold)
-	if err != nil {
-		return Profile{}, fmt.Errorf("profiles.%s.inbound_anomaly_score_threshold: %w", name, err)
-	}
-
-	outboundThreshold, err := normalizeOptionalPositiveInt(raw.OutboundAnomalyThreshold)
-	if err != nil {
-		return Profile{}, fmt.Errorf("profiles.%s.outbound_anomaly_score_threshold: %w", name, err)
-	}
-
-	requestBodyLimit, err := normalizeBodyLimit(raw.RequestBodyLimitBytes)
-	if err != nil {
-		return Profile{}, fmt.Errorf("profiles.%s.request_body_limit_bytes: %w", name, err)
-	}
-
-	responseBodyLimit, err := normalizeBodyLimit(raw.ResponseBodyLimitBytes)
-	if err != nil {
-		return Profile{}, fmt.Errorf("profiles.%s.response_body_limit_bytes: %w", name, err)
-	}
-
-	responseBodyMIMETypes, err := normalizeMIMETypes(raw.ResponseBodyMIMETypes)
-	if err != nil {
-		return Profile{}, fmt.Errorf("profiles.%s.response_body_mime_types: %w", name, err)
-	}
-
-	onError, err := normalizeOnError(raw.OnError)
-	if err != nil {
-		return Profile{}, fmt.Errorf("profiles.%s.on_error: %w", name, err)
+		return Profile{}, fmt.Errorf("profiles.%s.directives: %w", name, err)
 	}
 
 	return Profile{
-		Name:                     name,
-		Mode:                     mode,
-		EarlyBlocking:            raw.EarlyBlocking,
-		BlockingParanoiaLevel:    blockingParanoiaLevel,
-		DetectionParanoiaLevel:   detectionParanoiaLevel,
-		RequestBodyLimit:         requestBodyLimit,
-		ResponseBodyLimit:        responseBodyLimit,
-		ResponseBodyMIMETypes:    responseBodyMIMETypes,
-		ExcludedRuleIDs:          excludedRuleIDs,
-		InboundAnomalyThreshold:  inboundThreshold,
-		OutboundAnomalyThreshold: outboundThreshold,
-		OnError:                  onError,
+		Name:       name,
+		Directives: directives,
+		EngineMode: engineMode,
 	}, nil
 }
 
-func normalizeOnError(raw rawOnError) (model.OnErrorPolicy, error) {
-	defaultPolicy := model.ErrorPolicyDeny
-	if strings.TrimSpace(raw.Default) != "" {
-		parsed, err := parseErrorPolicy(raw.Default)
-		if err != nil {
-			return model.OnErrorPolicy{}, fmt.Errorf("default: %w", err)
-		}
-		defaultPolicy = parsed
+func parseEngineModeFromDirectives(directives string) (model.EngineMode, error) {
+	matches := secRuleEnginePattern.FindAllStringSubmatch(directives, -1)
+	if len(matches) == 0 {
+		return "", fmt.Errorf("must include exactly one explicit SecRuleEngine directive")
+	}
+	if len(matches) > 1 {
+		return "", fmt.Errorf("must include exactly one explicit SecRuleEngine directive")
 	}
 
-	onError := model.OnErrorPolicy{
-		Default:   defaultPolicy,
-		Overrides: map[model.ProcessingAction]model.ErrorPolicy{},
+	switch strings.ToLower(strings.TrimSpace(matches[0][1])) {
+	case "on":
+		return model.EngineModeBlock, nil
+	case "detectiononly":
+		return model.EngineModeDetect, nil
+	case "off":
+		return model.EngineModeOff, nil
+	default:
+		return "", fmt.Errorf("SecRuleEngine must be On, DetectionOnly, or Off")
 	}
-
-	type overrideEntry struct {
-		raw    string
-		action model.ProcessingAction
-	}
-	for _, entry := range []overrideEntry{
-		{raw: raw.RequestHeaders, action: model.ActionRequestHeaders},
-		{raw: raw.RequestBody, action: model.ActionRequestBody},
-		{raw: raw.ResponseHeaders, action: model.ActionResponseHeaders},
-		{raw: raw.ResponseBody, action: model.ActionResponseBody},
-	} {
-		if strings.TrimSpace(entry.raw) == "" {
-			continue
-		}
-		parsed, err := parseErrorPolicy(entry.raw)
-		if err != nil {
-			return model.OnErrorPolicy{}, fmt.Errorf("%s: %w", entry.action, err)
-		}
-		onError.Overrides[entry.action] = parsed
-	}
-	return onError, nil
 }
 
 func parseLevel(raw string) slog.Level {
@@ -251,108 +157,6 @@ func parseLevel(raw string) slog.Level {
 		return slog.LevelError
 	default:
 		return slog.LevelInfo
-	}
-}
-
-func parseMode(raw string) (model.Mode, error) {
-	value := strings.ToLower(strings.TrimSpace(raw))
-	if value == "" {
-		return model.ModeBlock, nil
-	}
-	switch value {
-	case string(model.ModeDetect):
-		return model.ModeDetect, nil
-	case string(model.ModeBlock):
-		return model.ModeBlock, nil
-	default:
-		return "", fmt.Errorf("must be detect or block")
-	}
-}
-
-func normalizeRuleIDs(input []int) ([]int, error) {
-	if len(input) == 0 {
-		return nil, nil
-	}
-
-	seen := map[int]struct{}{}
-	ruleIDs := make([]int, 0, len(input))
-	for _, ruleID := range input {
-		if ruleID <= 0 {
-			return nil, fmt.Errorf("rule ids must be positive integers")
-		}
-		if _, ok := seen[ruleID]; ok {
-			continue
-		}
-		seen[ruleID] = struct{}{}
-		ruleIDs = append(ruleIDs, ruleID)
-	}
-	slices.Sort(ruleIDs)
-	return ruleIDs, nil
-}
-
-func normalizeOptionalPositiveInt(value *int) (*int, error) {
-	if value == nil {
-		return nil, nil
-	}
-	if *value <= 0 {
-		return nil, fmt.Errorf("must be a positive integer")
-	}
-	return cloneIntPointer(value), nil
-}
-
-func normalizeOptionalParanoiaLevel(value *int) (*int, error) {
-	if value == nil {
-		return nil, nil
-	}
-	if *value < 1 || *value > 4 {
-		return nil, fmt.Errorf("must be an integer between 1 and 4")
-	}
-	return cloneIntPointer(value), nil
-}
-
-func normalizeBodyLimit(value *int) (int, error) {
-	if value == nil {
-		return defaultBodySize, nil
-	}
-	if *value <= 0 {
-		return 0, fmt.Errorf("must be a positive integer")
-	}
-	return *value, nil
-}
-
-func normalizeMIMETypes(input []string) ([]string, error) {
-	if len(input) == 0 {
-		return nil, nil
-	}
-
-	seen := map[string]struct{}{}
-	types := make([]string, 0, len(input))
-	for _, raw := range input {
-		mimeType := strings.ToLower(strings.TrimSpace(raw))
-		if mimeType == "" {
-			return nil, fmt.Errorf("mime types must not be empty")
-		}
-		if strings.ContainsAny(mimeType, " \t\r\n") {
-			return nil, fmt.Errorf("mime type %q must not contain whitespace", raw)
-		}
-		if _, ok := seen[mimeType]; ok {
-			continue
-		}
-		seen[mimeType] = struct{}{}
-		types = append(types, mimeType)
-	}
-	slices.Sort(types)
-	return types, nil
-}
-
-func parseErrorPolicy(raw string) (model.ErrorPolicy, error) {
-	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case string(model.ErrorPolicyAllow):
-		return model.ErrorPolicyAllow, nil
-	case string(model.ErrorPolicyDeny):
-		return model.ErrorPolicyDeny, nil
-	default:
-		return "", fmt.Errorf("must be allow or deny")
 	}
 }
 
@@ -377,12 +181,4 @@ func parseNonNegativeIntEnv(name string) (int, error) {
 		return 0, fmt.Errorf("%s must be a non-negative integer", name)
 	}
 	return value, nil
-}
-
-func cloneIntPointer(value *int) *int {
-	if value == nil {
-		return nil
-	}
-	cloned := *value
-	return &cloned
 }

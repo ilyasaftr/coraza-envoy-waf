@@ -19,21 +19,19 @@ type Session interface {
 
 type ProfileRuntime struct {
 	Name               string
-	Mode               model.Mode
-	OnError            model.OnErrorPolicy
+	EngineMode         model.EngineMode
 	NewSession         func(req model.Request) Session
 	ThresholdForAction func(action model.ProcessingAction) model.ThresholdInfo
 }
 
-func NewProfileRuntime(name string, evaluator *waf.Evaluator, mode model.Mode, onError model.OnErrorPolicy) (ProfileRuntime, error) {
+func NewProfileRuntime(name string, evaluator *waf.Evaluator, engineMode model.EngineMode) (ProfileRuntime, error) {
 	if evaluator == nil {
 		return ProfileRuntime{}, errors.New("evaluator is required")
 	}
 
 	runtime := ProfileRuntime{
-		Name:    strings.TrimSpace(name),
-		Mode:    NormalizeMode(mode),
-		OnError: NormalizeOnErrorPolicy(onError),
+		Name:       strings.TrimSpace(name),
+		EngineMode: NormalizeEngineMode(engineMode),
 		NewSession: func(req model.Request) Session {
 			return evaluator.NewSession(req)
 		},
@@ -66,8 +64,7 @@ func NormalizeProfiles(profiles map[string]ProfileRuntime, defaultProfile string
 		if runtime.Name == "" {
 			runtime.Name = profileName
 		}
-		runtime.Mode = NormalizeMode(runtime.Mode)
-		runtime.OnError = NormalizeOnErrorPolicy(runtime.OnError)
+		runtime.EngineMode = NormalizeEngineMode(runtime.EngineMode)
 		if runtime.ThresholdForAction == nil {
 			runtime.ThresholdForAction = func(model.ProcessingAction) model.ThresholdInfo {
 				return model.ThresholdInfo{Source: model.ThresholdSourceUnknown}
@@ -83,23 +80,15 @@ func NormalizeProfiles(profiles map[string]ProfileRuntime, defaultProfile string
 	return normalized, defaultName, nil
 }
 
-func NormalizeMode(mode model.Mode) model.Mode {
+func NormalizeEngineMode(mode model.EngineMode) model.EngineMode {
 	switch mode {
-	case model.ModeDetect:
-		return model.ModeDetect
-	case model.ModeBlock:
-		return model.ModeBlock
+	case model.EngineModeDetect:
+		return model.EngineModeDetect
+	case model.EngineModeBlock:
+		return model.EngineModeBlock
+	case model.EngineModeOff:
+		return model.EngineModeOff
 	default:
-		return model.ModeBlock
+		return model.EngineModeBlock
 	}
-}
-
-func NormalizeOnErrorPolicy(policy model.OnErrorPolicy) model.OnErrorPolicy {
-	if policy.Default == "" {
-		policy.Default = model.ErrorPolicyDeny
-	}
-	if policy.Overrides == nil {
-		policy.Overrides = map[model.ProcessingAction]model.ErrorPolicy{}
-	}
-	return policy
 }

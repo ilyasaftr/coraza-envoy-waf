@@ -61,7 +61,8 @@ RUN printf '%s\n' \
     'default_profile: default' \
     'profiles:' \
     '  default:' \
-    '    mode: detect' \
+    '    directives: |' \
+    '      SecRuleEngine DetectionOnly' \
   > /tmp/profiles.yaml
 
 RUN set -eux; \

@@ -17,30 +17,13 @@ import (
 	"github.com/ilyasaftr/coraza-envoy-waf/internal/model"
 )
 
-const defaultDirectives = `
-Include @coraza.conf-recommended
-Include @crs-setup.conf.example
-SecRuleEngine On
-Include @owasp_crs/*.conf
-`
-
 const crsInitializationFile = "rules/@owasp_crs/REQUEST-901-INITIALIZATION.conf"
 
 var (
-	inboundThresholdDirectivePattern  = regexp.MustCompile(`(?i)setvar:\s*'tx\.inbound_anomaly_score_threshold=([0-9]+)'`)
-	outboundThresholdDirectivePattern = regexp.MustCompile(`(?i)setvar:\s*'tx\.outbound_anomaly_score_threshold=([0-9]+)'`)
+	inboundThresholdDirectivePattern  = regexp.MustCompile(`(?i)setvar:\s*'?tx\.inbound_anomaly_score_threshold=([0-9]+)'?`)
+	outboundThresholdDirectivePattern = regexp.MustCompile(`(?i)setvar:\s*'?tx\.outbound_anomaly_score_threshold=([0-9]+)'?`)
 	totalScorePattern                 = regexp.MustCompile(`(?i)total score:\s*([0-9]+)`)
 )
-
-type RuntimeOptions struct {
-	BlockingParanoiaLevel    *int
-	DetectionParanoiaLevel   *int
-	ExcludedRuleIDs          []int
-	InboundAnomalyThreshold  *int
-	OutboundAnomalyThreshold *int
-	ResponseBodyMIMETypes    []string
-	EarlyBlocking            bool
-}
 
 type Evaluator struct {
 	waf               coraza.WAF
@@ -59,29 +42,23 @@ type Session struct {
 	closed             bool
 }
 
-func NewEvaluator(requestBodyLimit int, responseBodyLimit int, logger *slog.Logger) (*Evaluator, error) {
-	return NewEvaluatorWithOptions(requestBodyLimit, responseBodyLimit, RuntimeOptions{}, logger)
-}
-
-func NewEvaluatorWithOptions(requestBodyLimit int, responseBodyLimit int, options RuntimeOptions, logger *slog.Logger) (*Evaluator, error) {
+func NewEvaluatorWithDirectives(directives string, logger *slog.Logger) (*Evaluator, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
 
-	directives, inboundThreshold, outboundThreshold, err := buildRuntimeDirectives(options)
+	inboundThreshold, outboundThreshold, err := resolveThresholdMetadataFromDirectives(directives)
 	if err != nil {
 		return nil, err
 	}
 	if inboundThreshold.Source == model.ThresholdSourceUnknown {
-		logger.Warn("unable to resolve inbound anomaly threshold from embedded CRS defaults")
+		logger.Warn("unable to resolve inbound anomaly threshold from directives or embedded CRS defaults")
 	}
 	if outboundThreshold.Source == model.ThresholdSourceUnknown {
-		logger.Warn("unable to resolve outbound anomaly threshold from embedded CRS defaults")
+		logger.Warn("unable to resolve outbound anomaly threshold from directives or embedded CRS defaults")
 	}
 
 	return newEvaluatorWithDirectives(
-		requestBodyLimit,
-		responseBodyLimit,
 		directives,
 		inboundThreshold,
 		outboundThreshold,
@@ -89,25 +66,7 @@ func NewEvaluatorWithOptions(requestBodyLimit int, responseBodyLimit int, option
 	)
 }
 
-func NewEvaluatorWithDirectives(bodyLimit int, directives string, logger *slog.Logger) (*Evaluator, error) {
-	return NewEvaluatorWithLimitsAndDirectives(bodyLimit, bodyLimit, directives, logger)
-}
-
-func NewEvaluatorWithLimitsAndDirectives(requestBodyLimit int, responseBodyLimit int, directives string, logger *slog.Logger) (*Evaluator, error) {
-	unknownThreshold := model.ThresholdInfo{Source: model.ThresholdSourceUnknown}
-	return newEvaluatorWithDirectives(
-		requestBodyLimit,
-		responseBodyLimit,
-		directives,
-		unknownThreshold,
-		unknownThreshold,
-		logger,
-	)
-}
-
 func newEvaluatorWithDirectives(
-	requestBodyLimit int,
-	responseBodyLimit int,
 	directives string,
 	inboundThreshold model.ThresholdInfo,
 	outboundThreshold model.ThresholdInfo,
@@ -119,11 +78,6 @@ func newEvaluatorWithDirectives(
 
 	wafConfig := coraza.NewWAFConfig().
 		WithRootFS(coreruleset.FS).
-		WithRequestBodyAccess().
-		WithRequestBodyLimit(requestBodyLimit).
-		WithRequestBodyInMemoryLimit(requestBodyLimit).
-		WithResponseBodyAccess().
-		WithResponseBodyLimit(responseBodyLimit).
 		WithErrorCallback(func(mr corazatypes.MatchedRule) {
 			logger.Warn("coraza error callback", "message", mr.ErrorLog())
 		}).
@@ -181,9 +135,6 @@ func (e *Evaluator) NewSession(req model.Request) *Session {
 	}
 	if req.Protocol == "" {
 		req.Protocol = "HTTP/1.1"
-	}
-	if req.Mode == "" {
-		req.Mode = model.ModeDetect
 	}
 
 	tx := e.waf.NewTransactionWithID(req.ID)
@@ -333,7 +284,6 @@ func (s *Session) handleInterruption(interruption *corazatypes.Interruption) mod
 	s.logger.Warn(
 		"coraza interruption",
 		"request_id", s.req.ID,
-		"mode", s.req.Mode,
 		"rule_id", interruption.RuleID,
 		"action", interruption.Action,
 		"status", interruption.Status,
@@ -342,24 +292,11 @@ func (s *Session) handleInterruption(interruption *corazatypes.Interruption) mod
 		"path", s.req.Path,
 	)
 
-	if s.req.Mode == model.ModeBlock {
-		return model.Result{
-			Decision:       model.DecisionDeny,
-			HTTPStatusCode: 403,
-			Body:           "blocked by coraza waf",
-			RuleID:         ruleID,
-			Interruption: &model.Interruption{
-				RuleID:       interruption.RuleID,
-				Action:       interruption.Action,
-				Status:       interruption.Status,
-				Data:         interruption.Data,
-				AnomalyScore: anomalyScore,
-			},
-		}
-	}
-
 	return model.Result{
-		Decision: model.DecisionAllow,
+		Decision:       model.DecisionDeny,
+		HTTPStatusCode: 403,
+		Body:           "blocked by coraza waf",
+		RuleID:         ruleID,
 		Interruption: &model.Interruption{
 			RuleID:       interruption.RuleID,
 			Action:       interruption.Action,
@@ -370,92 +307,26 @@ func (s *Session) handleInterruption(interruption *corazatypes.Interruption) mod
 	}
 }
 
-func buildRuntimeDirectives(options RuntimeOptions) (string, model.ThresholdInfo, model.ThresholdInfo, error) {
-	inboundThreshold, outboundThreshold, err := resolveThresholdMetadata(options)
-	if err != nil {
-		return "", model.ThresholdInfo{}, model.ThresholdInfo{}, err
-	}
+func resolveThresholdMetadataFromDirectives(directives string) (model.ThresholdInfo, model.ThresholdInfo, error) {
+	explicitInbound := parseThresholdValue([]byte(directives), inboundThresholdDirectivePattern)
+	explicitOutbound := parseThresholdValue([]byte(directives), outboundThresholdDirectivePattern)
 
-	lines := []string{
-		"Include @coraza.conf-recommended",
-		"Include @crs-setup.conf.example",
-		"SecRuleEngine On",
-		"SecResponseBodyLimitAction Reject",
-	}
-
-	if options.InboundAnomalyThreshold != nil {
-		lines = append(
-			lines,
-			fmt.Sprintf(`SecAction "id:10000001,phase:1,pass,nolog,setvar:tx.inbound_anomaly_score_threshold=%d"`, *options.InboundAnomalyThreshold),
-		)
-	}
-	if options.OutboundAnomalyThreshold != nil {
-		lines = append(
-			lines,
-			fmt.Sprintf(`SecAction "id:10000002,phase:1,pass,nolog,setvar:tx.outbound_anomaly_score_threshold=%d"`, *options.OutboundAnomalyThreshold),
-		)
-	}
-	if options.BlockingParanoiaLevel != nil {
-		lines = append(
-			lines,
-			fmt.Sprintf(`SecAction "id:10000004,phase:1,pass,nolog,setvar:tx.blocking_paranoia_level=%d"`, *options.BlockingParanoiaLevel),
-		)
-	}
-	if options.DetectionParanoiaLevel != nil {
-		lines = append(
-			lines,
-			fmt.Sprintf(`SecAction "id:10000005,phase:1,pass,nolog,setvar:tx.detection_paranoia_level=%d"`, *options.DetectionParanoiaLevel),
-		)
-	}
-	if options.EarlyBlocking {
-		lines = append(
-			lines,
-			`SecAction "id:10000003,phase:1,pass,nolog,setvar:tx.early_blocking=1"`,
-		)
-	}
-
-	lines = append(lines, "Include @owasp_crs/*.conf")
-
-	for _, ruleID := range options.ExcludedRuleIDs {
-		lines = append(lines, fmt.Sprintf("SecRuleRemoveById %d", ruleID))
-	}
-	if len(options.ResponseBodyMIMETypes) > 0 {
-		lines = append(lines, "SecResponseBodyMimeType "+strings.Join(options.ResponseBodyMIMETypes, " "))
-	}
-
-	return strings.Join(lines, "\n"), inboundThreshold, outboundThreshold, nil
-}
-
-func resolveThresholdMetadata(options RuntimeOptions) (model.ThresholdInfo, model.ThresholdInfo, error) {
-	if options.InboundAnomalyThreshold != nil && options.OutboundAnomalyThreshold != nil {
-		return model.ThresholdInfo{
-				Value:  cloneIntPointer(options.InboundAnomalyThreshold),
-				Source: model.ThresholdSourceEnvOverride,
-			}, model.ThresholdInfo{
-				Value:  cloneIntPointer(options.OutboundAnomalyThreshold),
-				Source: model.ThresholdSourceEnvOverride,
-			}, nil
-	}
-
-	// When threshold env vars are unset, we do not inject SecAction overrides.
-	// We derive defaults from embedded CRS initialization rules instead of using
-	// hardcoded constants, so defaults follow upstream CRS changes.
 	defaultInbound, defaultOutbound, err := resolveCRSDefaultThresholds()
 	if err != nil {
 		defaultInbound = nil
 		defaultOutbound = nil
 	}
 
-	inbound := thresholdInfoFromOverrideOrDefault(options.InboundAnomalyThreshold, defaultInbound)
-	outbound := thresholdInfoFromOverrideOrDefault(options.OutboundAnomalyThreshold, defaultOutbound)
-	return inbound, outbound, nil
+	return thresholdInfoFromDirectiveOrDefault(explicitInbound, defaultInbound),
+		thresholdInfoFromDirectiveOrDefault(explicitOutbound, defaultOutbound),
+		nil
 }
 
-func thresholdInfoFromOverrideOrDefault(override *int, defaultValue *int) model.ThresholdInfo {
-	if override != nil {
+func thresholdInfoFromDirectiveOrDefault(explicit *int, defaultValue *int) model.ThresholdInfo {
+	if explicit != nil {
 		return model.ThresholdInfo{
-			Value:  cloneIntPointer(override),
-			Source: model.ThresholdSourceEnvOverride,
+			Value:  cloneIntPointer(explicit),
+			Source: model.ThresholdSourceProfileDirective,
 		}
 	}
 	if defaultValue != nil {
@@ -479,7 +350,11 @@ func resolveCRSDefaultThresholds() (*int, *int, error) {
 }
 
 func parseThresholdValue(content []byte, pattern *regexp.Regexp) *int {
-	match := pattern.FindSubmatch(content)
+	matches := pattern.FindAllSubmatch(content, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+	match := matches[len(matches)-1]
 	if len(match) < 2 {
 		return nil
 	}

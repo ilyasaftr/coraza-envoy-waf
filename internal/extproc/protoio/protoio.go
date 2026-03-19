@@ -12,13 +12,12 @@ import (
 	"github.com/ilyasaftr/coraza-envoy-waf/internal/model"
 )
 
-func ParseRequestHeaders(httpHeaders *extprocv3.HttpHeaders, mode model.Mode) model.Request {
+func ParseRequestHeaders(httpHeaders *extprocv3.HttpHeaders) model.Request {
 	request := model.Request{
 		ID:       strconv.FormatInt(time.Now().UnixNano(), 10),
 		Method:   "GET",
 		Path:     "/",
 		Protocol: "HTTP/1.1",
-		Mode:     mode,
 	}
 	if httpHeaders == nil || httpHeaders.GetHeaders() == nil {
 		return request
@@ -106,9 +105,9 @@ func ContinueTrailersResponse(isRequest bool) *extprocv3.ProcessingResponse {
 	}
 }
 
-func ResponseForAction(action model.ProcessingAction, mode model.Mode, result model.Result) *extprocv3.ProcessingResponse {
+func ResponseForAction(action model.ProcessingAction, engineMode model.EngineMode, result model.Result) *extprocv3.ProcessingResponse {
 	if shouldDeny(result) {
-		return ImmediateDenyResponse(mode, result)
+		return ImmediateDenyResponse(engineMode, result)
 	}
 
 	switch action {
@@ -143,11 +142,11 @@ func ResponseForAction(action model.ProcessingAction, mode model.Mode, result mo
 			Body:           "internal authorization error",
 			Err:            errors.New("unknown processing action"),
 		}
-		return ImmediateDenyResponse(mode, unknown)
+		return ImmediateDenyResponse(engineMode, unknown)
 	}
 }
 
-func ImmediateDenyResponse(mode model.Mode, result model.Result) *extprocv3.ProcessingResponse {
+func ImmediateDenyResponse(engineMode model.EngineMode, result model.Result) *extprocv3.ProcessingResponse {
 	statusCode := result.HTTPStatusCode
 	if statusCode <= 0 {
 		if result.Decision == model.DecisionError {
@@ -186,7 +185,7 @@ func ImmediateDenyResponse(mode model.Mode, result model.Result) *extprocv3.Proc
 						{
 							Header: &corev3.HeaderValue{
 								Key:      "x-waf-mode",
-								RawValue: []byte(mode),
+								RawValue: []byte(engineMode),
 							},
 						},
 						{

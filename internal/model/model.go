@@ -2,18 +2,12 @@ package model
 
 import "context"
 
-type Mode string
+type EngineMode string
 
 const (
-	ModeDetect Mode = "detect"
-	ModeBlock  Mode = "block"
-)
-
-type ErrorPolicy string
-
-const (
-	ErrorPolicyAllow ErrorPolicy = "allow"
-	ErrorPolicyDeny  ErrorPolicy = "deny"
+	EngineModeDetect EngineMode = "detect"
+	EngineModeBlock  EngineMode = "block"
+	EngineModeOff    EngineMode = "off"
 )
 
 type ProcessingAction string
@@ -29,31 +23,14 @@ const (
 type ThresholdSource string
 
 const (
-	ThresholdSourceEnvOverride ThresholdSource = "env_override"
-	ThresholdSourceCRSDefault  ThresholdSource = "crs_default"
-	ThresholdSourceUnknown     ThresholdSource = "unknown"
+	ThresholdSourceProfileDirective ThresholdSource = "profile_directive"
+	ThresholdSourceCRSDefault       ThresholdSource = "crs_default"
+	ThresholdSourceUnknown          ThresholdSource = "unknown"
 )
 
 type ThresholdInfo struct {
 	Value  *int
 	Source ThresholdSource
-}
-
-type OnErrorPolicy struct {
-	Default   ErrorPolicy
-	Overrides map[ProcessingAction]ErrorPolicy
-}
-
-func (p OnErrorPolicy) Resolve(action ProcessingAction) ErrorPolicy {
-	if p.Overrides != nil {
-		if policy, ok := p.Overrides[action]; ok {
-			return policy
-		}
-	}
-	if p.Default != "" {
-		return p.Default
-	}
-	return ErrorPolicyDeny
 }
 
 type Decision string
@@ -76,7 +53,6 @@ type Request struct {
 	Query    string
 	Host     string
 	Protocol string
-	Mode     Mode
 
 	Headers []Header
 	Body    []byte
@@ -109,5 +85,5 @@ type Evaluator interface {
 }
 
 type Recorder interface {
-	Record(req Request, result Result)
+	Record(req Request, engineMode EngineMode, result Result)
 }

@@ -12,6 +12,7 @@ func LogFinalResult(
 	logger *slog.Logger,
 	request model.Request,
 	profileName string,
+	engineMode model.EngineMode,
 	finalResult model.Result,
 	outcomes []pipeline.ActionOutcome,
 ) {
@@ -32,7 +33,6 @@ func LogFinalResult(
 			"action":           string(item.Action),
 			"decision":         string(item.Decision),
 			"interrupted":      item.Interrupted,
-			"on_error_policy":  string(item.OnErrorPolicy),
 			"threshold_source": string(item.ThresholdSource),
 		}
 		if item.HTTPStatusCode > 0 {
@@ -59,7 +59,7 @@ func LogFinalResult(
 		"host", request.Host,
 		"path", request.Path,
 		"method", request.Method,
-		"mode", request.Mode,
+		"mode", engineMode,
 		"final_decision", finalResult.Decision,
 		"action_results", actionResults,
 	}

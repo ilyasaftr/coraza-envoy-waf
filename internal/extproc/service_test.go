@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
@@ -19,8 +20,16 @@ import (
 	structpb "google.golang.org/protobuf/types/known/structpb"
 )
 
-const testDirectives = `
+const blockTestDirectives = `
 SecRuleEngine On
+SecResponseBodyAccess On
+SecResponseBodyMimeType text/html
+SecRule REQUEST_URI "@streq /blocked" "id:101,phase:1,deny,status:403"
+SecRule RESPONSE_BODY "@contains blocked-response" "id:202,phase:4,deny,status:403"
+`
+
+const detectTestDirectives = `
+SecRuleEngine DetectionOnly
 SecResponseBodyAccess On
 SecResponseBodyMimeType text/html
 SecRule REQUEST_URI "@streq /blocked" "id:101,phase:1,deny,status:403"
@@ -29,23 +38,11 @@ SecRule RESPONSE_BODY "@contains blocked-response" "id:202,phase:4,deny,status:4
 
 func TestHandleMessageBlocksOnRequestHeaders(t *testing.T) {
 	service := newEvaluatorService(t, map[string]ProfileRuntime{
-		"strict": newEvaluatorRuntime(t, "strict", model.ModeBlock, model.OnErrorPolicy{Default: model.ErrorPolicyDeny}),
+		"strict": newEvaluatorRuntime(t, "strict", model.EngineModeBlock),
 	}, "strict")
 
 	state := service.newStreamState()
-	msg := &extprocv3.ProcessingRequest{
-		Request: &extprocv3.ProcessingRequest_RequestHeaders{
-			RequestHeaders: &extprocv3.HttpHeaders{
-				Headers: headerMap(
-					":method", "GET",
-					":path", "/blocked",
-					":authority", "podinfo.klawu.com",
-				),
-			},
-		},
-	}
-
-	result, resp := service.handleMessage(state, msg)
+	result, resp := service.handleMessage(state, requestHeadersMessage("/blocked", nil))
 	if result.Decision != model.DecisionDeny {
 		t.Fatalf("expected deny decision, got %q", result.Decision)
 	}
@@ -56,7 +53,7 @@ func TestHandleMessageBlocksOnRequestHeaders(t *testing.T) {
 
 func TestImmediateDenyHeadersUseWAFPrefix(t *testing.T) {
 	service := newEvaluatorService(t, map[string]ProfileRuntime{
-		"strict": newEvaluatorRuntime(t, "strict", model.ModeBlock, model.OnErrorPolicy{Default: model.ErrorPolicyDeny}),
+		"strict": newEvaluatorRuntime(t, "strict", model.EngineModeBlock),
 	}, "strict")
 
 	state := service.newStreamState()
@@ -75,8 +72,8 @@ func TestImmediateDenyHeadersUseWAFPrefix(t *testing.T) {
 		headers[option.GetHeader().GetKey()] = string(option.GetHeader().GetRawValue())
 	}
 
-	if got := headers["x-waf-mode"]; got != string(model.ModeBlock) {
-		t.Fatalf("expected x-waf-mode=%q, got %q", model.ModeBlock, got)
+	if got := headers["x-waf-mode"]; got != string(model.EngineModeBlock) {
+		t.Fatalf("expected x-waf-mode=%q, got %q", model.EngineModeBlock, got)
 	}
 	if got := headers["x-waf-rule-id"]; got == "" {
 		t.Fatal("expected x-waf-rule-id to be set")
@@ -85,7 +82,7 @@ func TestImmediateDenyHeadersUseWAFPrefix(t *testing.T) {
 
 func TestHandleMessageBlocksOnResponseBody(t *testing.T) {
 	service := newEvaluatorService(t, map[string]ProfileRuntime{
-		"strict": newEvaluatorRuntime(t, "strict", model.ModeBlock, model.OnErrorPolicy{Default: model.ErrorPolicyDeny}),
+		"strict": newEvaluatorRuntime(t, "strict", model.EngineModeBlock),
 	}, "strict")
 
 	state := service.newStreamState()
@@ -127,7 +124,7 @@ func TestHandleMessageBlocksOnResponseBody(t *testing.T) {
 
 func TestHandleMessageAllowsBenignTraffic(t *testing.T) {
 	service := newEvaluatorService(t, map[string]ProfileRuntime{
-		"strict": newEvaluatorRuntime(t, "strict", model.ModeBlock, model.OnErrorPolicy{Default: model.ErrorPolicyDeny}),
+		"strict": newEvaluatorRuntime(t, "strict", model.EngineModeBlock),
 	}, "strict")
 
 	state := service.newStreamState()
@@ -150,14 +147,7 @@ func TestRequestHeadersEndOfStreamTriggersRequestBodyPhase(t *testing.T) {
 		},
 	}
 	service := newStubService(t, map[string]ProfileRuntime{
-		"strict": newStubRuntime(
-			"strict",
-			model.ModeBlock,
-			model.OnErrorPolicy{Default: model.ErrorPolicyDeny},
-			stub,
-			model.ThresholdInfo{},
-			model.ThresholdInfo{},
-		),
+		"strict": newStubRuntime("strict", model.EngineModeBlock, stub, model.ThresholdInfo{}, model.ThresholdInfo{}),
 	}, "strict")
 
 	state := service.newStreamState()
@@ -188,14 +178,7 @@ func TestResponseHeadersFinalizeRequestBodyWhenMissingRequestBodyMessage(t *test
 		responseHeadersResult: model.Result{Decision: model.DecisionAllow},
 	}
 	service := newStubService(t, map[string]ProfileRuntime{
-		"strict": newStubRuntime(
-			"strict",
-			model.ModeBlock,
-			model.OnErrorPolicy{Default: model.ErrorPolicyDeny},
-			stub,
-			model.ThresholdInfo{},
-			model.ThresholdInfo{},
-		),
+		"strict": newStubRuntime("strict", model.EngineModeBlock, stub, model.ThresholdInfo{}, model.ThresholdInfo{}),
 	}, "strict")
 
 	state := service.newStreamState()
@@ -228,7 +211,7 @@ func TestResponseHeadersFinalizeRequestBodyWhenMissingRequestBodyMessage(t *test
 
 func TestProcessIgnoresCanceledAfterSuccessfulResult(t *testing.T) {
 	service := newEvaluatorService(t, map[string]ProfileRuntime{
-		"strict": newEvaluatorRuntime(t, "strict", model.ModeBlock, model.OnErrorPolicy{Default: model.ErrorPolicyDeny}),
+		"strict": newEvaluatorRuntime(t, "strict", model.EngineModeBlock),
 	}, "strict")
 	recorder := &capturingRecorder{}
 	service.recorder = recorder
@@ -275,7 +258,7 @@ func TestProcessIgnoresCanceledAfterSuccessfulResult(t *testing.T) {
 
 func TestProcessIgnoresCanceledAfterSuccessfulRequestOnlyResult(t *testing.T) {
 	service := newEvaluatorService(t, map[string]ProfileRuntime{
-		"strict": newEvaluatorRuntime(t, "strict", model.ModeBlock, model.OnErrorPolicy{Default: model.ErrorPolicyDeny}),
+		"strict": newEvaluatorRuntime(t, "strict", model.EngineModeBlock),
 	}, "strict")
 	recorder := &capturingRecorder{}
 	service.recorder = recorder
@@ -298,7 +281,7 @@ func TestProcessIgnoresCanceledAfterSuccessfulRequestOnlyResult(t *testing.T) {
 
 func TestProcessIgnoresCanceledAfterSuccessfulResponseHeadersOnlyResult(t *testing.T) {
 	service := newEvaluatorService(t, map[string]ProfileRuntime{
-		"strict": newEvaluatorRuntime(t, "strict", model.ModeBlock, model.OnErrorPolicy{Default: model.ErrorPolicyDeny}),
+		"strict": newEvaluatorRuntime(t, "strict", model.EngineModeBlock),
 	}, "strict")
 	recorder := &capturingRecorder{}
 	service.recorder = recorder
@@ -332,7 +315,7 @@ func TestProcessIgnoresCanceledAfterSuccessfulResponseHeadersOnlyResult(t *testi
 
 func TestProcessReturnsErrorOnEarlyCanceledStream(t *testing.T) {
 	service := newEvaluatorService(t, map[string]ProfileRuntime{
-		"strict": newEvaluatorRuntime(t, "strict", model.ModeBlock, model.OnErrorPolicy{Default: model.ErrorPolicyDeny}),
+		"strict": newEvaluatorRuntime(t, "strict", model.EngineModeBlock),
 	}, "strict")
 
 	stream := &stubProcessStream{
@@ -347,7 +330,7 @@ func TestProcessReturnsErrorOnEarlyCanceledStream(t *testing.T) {
 
 func TestHandleMessageUnknownTypeReturnsInternalError(t *testing.T) {
 	service := newEvaluatorService(t, map[string]ProfileRuntime{
-		"strict": newEvaluatorRuntime(t, "strict", model.ModeBlock, model.OnErrorPolicy{Default: model.ErrorPolicyDeny}),
+		"strict": newEvaluatorRuntime(t, "strict", model.EngineModeBlock),
 	}, "strict")
 
 	state := service.newStreamState()
@@ -368,8 +351,8 @@ func TestHandleMessageUnknownTypeReturnsInternalError(t *testing.T) {
 
 func TestSelectProfileFromRouteMetadataShortKey(t *testing.T) {
 	service := newEvaluatorService(t, map[string]ProfileRuntime{
-		"default": newEvaluatorRuntime(t, "default", model.ModeDetect, model.OnErrorPolicy{Default: model.ErrorPolicyDeny}),
-		"strict":  newEvaluatorRuntime(t, "strict", model.ModeBlock, model.OnErrorPolicy{Default: model.ErrorPolicyDeny}),
+		"default": newEvaluatorRuntime(t, "default", model.EngineModeDetect),
+		"strict":  newEvaluatorRuntime(t, "strict", model.EngineModeBlock),
 	}, "default")
 
 	state := service.newStreamState()
@@ -379,8 +362,8 @@ func TestSelectProfileFromRouteMetadataShortKey(t *testing.T) {
 	if state.ProfileName() != "strict" {
 		t.Fatalf("expected strict profile, got %q", state.ProfileName())
 	}
-	if state.Request().Mode != model.ModeBlock {
-		t.Fatalf("expected block mode, got %q", state.Request().Mode)
+	if state.EngineMode() != model.EngineModeBlock {
+		t.Fatalf("expected block mode, got %q", state.EngineMode())
 	}
 	if result.Decision != model.DecisionDeny {
 		t.Fatalf("expected block profile to deny request, got %q", result.Decision)
@@ -389,8 +372,8 @@ func TestSelectProfileFromRouteMetadataShortKey(t *testing.T) {
 
 func TestSelectProfileFromRouteMetadataFullKey(t *testing.T) {
 	service := newEvaluatorService(t, map[string]ProfileRuntime{
-		"default": newEvaluatorRuntime(t, "default", model.ModeDetect, model.OnErrorPolicy{Default: model.ErrorPolicyDeny}),
-		"strict":  newEvaluatorRuntime(t, "strict", model.ModeBlock, model.OnErrorPolicy{Default: model.ErrorPolicyDeny}),
+		"default": newEvaluatorRuntime(t, "default", model.EngineModeDetect),
+		"strict":  newEvaluatorRuntime(t, "strict", model.EngineModeBlock),
 	}, "default")
 
 	state := service.newStreamState()
@@ -407,8 +390,8 @@ func TestSelectProfileFromRouteMetadataFullKey(t *testing.T) {
 
 func TestSelectProfileFromNamespacedExtProcAttributes(t *testing.T) {
 	service := newEvaluatorService(t, map[string]ProfileRuntime{
-		"default": newEvaluatorRuntime(t, "default", model.ModeDetect, model.OnErrorPolicy{Default: model.ErrorPolicyDeny}),
-		"strict":  newEvaluatorRuntime(t, "strict", model.ModeBlock, model.OnErrorPolicy{Default: model.ErrorPolicyDeny}),
+		"default": newEvaluatorRuntime(t, "default", model.EngineModeDetect),
+		"strict":  newEvaluatorRuntime(t, "strict", model.EngineModeBlock),
 	}, "default")
 
 	state := service.newStreamState()
@@ -425,8 +408,8 @@ func TestSelectProfileFromNamespacedExtProcAttributes(t *testing.T) {
 
 func TestSelectProfileFromNamespacedExtProcAttributesTextMetadata(t *testing.T) {
 	service := newEvaluatorService(t, map[string]ProfileRuntime{
-		"default": newEvaluatorRuntime(t, "default", model.ModeDetect, model.OnErrorPolicy{Default: model.ErrorPolicyDeny}),
-		"strict":  newEvaluatorRuntime(t, "strict", model.ModeBlock, model.OnErrorPolicy{Default: model.ErrorPolicyDeny}),
+		"default": newEvaluatorRuntime(t, "default", model.EngineModeDetect),
+		"strict":  newEvaluatorRuntime(t, "strict", model.EngineModeBlock),
 	}, "default")
 
 	state := service.newStreamState()
@@ -443,8 +426,8 @@ func TestSelectProfileFromNamespacedExtProcAttributesTextMetadata(t *testing.T) 
 
 func TestUnknownProfileFallsBackToDefault(t *testing.T) {
 	service := newEvaluatorService(t, map[string]ProfileRuntime{
-		"default": newEvaluatorRuntime(t, "default", model.ModeDetect, model.OnErrorPolicy{Default: model.ErrorPolicyDeny}),
-		"strict":  newEvaluatorRuntime(t, "strict", model.ModeBlock, model.OnErrorPolicy{Default: model.ErrorPolicyDeny}),
+		"default": newEvaluatorRuntime(t, "default", model.EngineModeDetect),
+		"strict":  newEvaluatorRuntime(t, "strict", model.EngineModeBlock),
 	}, "default")
 
 	state := service.newStreamState()
@@ -454,21 +437,21 @@ func TestUnknownProfileFallsBackToDefault(t *testing.T) {
 	if state.ProfileName() != "default" {
 		t.Fatalf("expected fallback default profile, got %q", state.ProfileName())
 	}
-	if state.Request().Mode != model.ModeDetect {
-		t.Fatalf("expected detect mode fallback, got %q", state.Request().Mode)
+	if state.EngineMode() != model.EngineModeDetect {
+		t.Fatalf("expected detect mode fallback, got %q", state.EngineMode())
 	}
 	if result.Decision != model.DecisionAllow {
-		t.Fatalf("expected detect-mode fallback to allow interruption, got %q", result.Decision)
+		t.Fatalf("expected detection-only fallback to allow request, got %q", result.Decision)
 	}
 	if resp.GetImmediateResponse() != nil {
-		t.Fatal("expected continue response in detect mode")
+		t.Fatal("expected continue response in detection-only mode")
 	}
 }
 
 func TestSelectProfileFromMetadataContext(t *testing.T) {
 	service := newEvaluatorService(t, map[string]ProfileRuntime{
-		"default": newEvaluatorRuntime(t, "default", model.ModeDetect, model.OnErrorPolicy{Default: model.ErrorPolicyDeny}),
-		"strict":  newEvaluatorRuntime(t, "strict", model.ModeBlock, model.OnErrorPolicy{Default: model.ErrorPolicyDeny}),
+		"default": newEvaluatorRuntime(t, "default", model.EngineModeDetect),
+		"strict":  newEvaluatorRuntime(t, "strict", model.EngineModeBlock),
 	}, "default")
 
 	state := service.newStreamState()
@@ -496,126 +479,127 @@ func TestSelectProfileFromMetadataContext(t *testing.T) {
 	}
 }
 
-func TestOnErrorAllowContinuesWithInternalError(t *testing.T) {
-	stub := &stubSession{
-		requestBodyResult: model.Result{
-			Decision: model.DecisionError,
-			Err:      errors.New("synthetic request body failure"),
-		},
-	}
-	service := newStubService(t, map[string]ProfileRuntime{
-		"strict": newStubRuntime(
-			"strict",
-			model.ModeBlock,
-			model.OnErrorPolicy{
-				Default: model.ErrorPolicyDeny,
-				Overrides: map[model.ProcessingAction]model.ErrorPolicy{
-					model.ActionRequestBody: model.ErrorPolicyAllow,
+func TestInternalActionErrorsFailOpen(t *testing.T) {
+	t.Run("request headers", func(t *testing.T) {
+		stub := &stubSession{
+			requestHeadersResult: model.Result{
+				Decision: model.DecisionError,
+				Err:      errors.New("synthetic request headers failure"),
+			},
+		}
+		service := newStubService(t, map[string]ProfileRuntime{
+			"strict": newStubRuntime("strict", model.EngineModeBlock, stub, model.ThresholdInfo{}, model.ThresholdInfo{}),
+		}, "strict")
+
+		state := service.newStreamState()
+		result, resp := service.handleMessage(state, requestHeadersMessage("/ok", nil))
+		if result.Decision != model.DecisionAllow {
+			t.Fatalf("expected allow decision, got %q", result.Decision)
+		}
+		if resp.GetRequestHeaders() == nil {
+			t.Fatal("expected continue request headers response")
+		}
+		if got := state.Outcomes()[0].Error; got == "" {
+			t.Fatal("expected error recorded in action outcome")
+		}
+	})
+
+	t.Run("request body", func(t *testing.T) {
+		stub := &stubSession{
+			requestHeadersResult: model.Result{Decision: model.DecisionAllow},
+			requestBodyResult: model.Result{
+				Decision: model.DecisionError,
+				Err:      errors.New("synthetic request body failure"),
+			},
+		}
+		service := newStubService(t, map[string]ProfileRuntime{
+			"strict": newStubRuntime("strict", model.EngineModeBlock, stub, model.ThresholdInfo{}, model.ThresholdInfo{}),
+		}, "strict")
+
+		state := service.newStreamState()
+		_, _ = service.handleMessage(state, requestHeadersMessage("/ok", nil))
+		result, resp := service.handleMessage(state, &extprocv3.ProcessingRequest{
+			Request: &extprocv3.ProcessingRequest_RequestBody{
+				RequestBody: &extprocv3.HttpBody{
+					Body:        []byte("payload"),
+					EndOfStream: true,
 				},
 			},
-			stub,
-			model.ThresholdInfo{},
-			model.ThresholdInfo{},
-		),
-	}, "strict")
-
-	state := service.newStreamState()
-	_, _ = service.handleMessage(state, requestHeadersMessage("/ok", nil))
-
-	result, resp := service.handleMessage(state, &extprocv3.ProcessingRequest{
-		Request: &extprocv3.ProcessingRequest_RequestBody{
-			RequestBody: &extprocv3.HttpBody{
-				Body:        []byte("x"),
-				EndOfStream: true,
-			},
-		},
+		})
+		if result.Decision != model.DecisionAllow {
+			t.Fatalf("expected allow decision, got %q", result.Decision)
+		}
+		if resp.GetRequestBody() == nil {
+			t.Fatal("expected continue request body response")
+		}
 	})
-	if result.Decision != model.DecisionAllow {
-		t.Fatalf("expected allow decision, got %q", result.Decision)
-	}
-	if resp.GetRequestBody() == nil {
-		t.Fatal("expected continue response for request body")
-	}
-	outcomes := state.Outcomes()
-	if got := outcomes[len(outcomes)-1].OnErrorPolicy; got != model.ErrorPolicyAllow {
-		t.Fatalf("expected on_error allow, got %q", got)
-	}
-}
 
-func TestDetectModeWithOnErrorDeny(t *testing.T) {
-	stub := &stubSession{
-		requestHeadersResult: model.Result{
-			Decision: model.DecisionAllow,
-			Interruption: &model.Interruption{
-				RuleID:       949110,
-				Data:         "Inbound Anomaly Score Exceeded (Total Score: 10)",
-				AnomalyScore: intPtr(10),
+	t.Run("response headers", func(t *testing.T) {
+		stub := &stubSession{
+			requestHeadersResult: model.Result{Decision: model.DecisionAllow},
+			responseHeadersResult: model.Result{
+				Decision: model.DecisionError,
+				Err:      errors.New("synthetic response headers failure"),
 			},
-		},
-		requestBodyResult: model.Result{
-			Decision: model.DecisionError,
-			Err:      errors.New("synthetic request body crash"),
-		},
-	}
+		}
+		service := newStubService(t, map[string]ProfileRuntime{
+			"strict": newStubRuntime("strict", model.EngineModeBlock, stub, model.ThresholdInfo{}, model.ThresholdInfo{}),
+		}, "strict")
 
-	service := newStubService(t, map[string]ProfileRuntime{
-		"default": newStubRuntime(
-			"default",
-			model.ModeDetect,
-			model.OnErrorPolicy{Default: model.ErrorPolicyDeny},
-			stub,
-			model.ThresholdInfo{
-				Value:  intPtr(5),
-				Source: model.ThresholdSourceEnvOverride,
+		state := service.newStreamState()
+		_, _ = service.handleMessage(state, requestHeadersMessageWithEndOfStream("/ok", nil, true))
+		result, resp := service.handleMessage(state, &extprocv3.ProcessingRequest{
+			Request: &extprocv3.ProcessingRequest_ResponseHeaders{
+				ResponseHeaders: &extprocv3.HttpHeaders{
+					Headers: headerMap(":status", "200"),
+				},
 			},
-			model.ThresholdInfo{},
-		),
-	}, "default")
-
-	state := service.newStreamState()
-
-	matchResult, matchResp := service.handleMessage(state, requestHeadersMessage("/attack", nil))
-	if matchResult.Decision != model.DecisionAllow {
-		t.Fatalf("expected allow in detect mode for interruption, got %q", matchResult.Decision)
-	}
-	if matchResp.GetImmediateResponse() != nil {
-		t.Fatal("expected continue response for detect-mode interruption")
-	}
-	outcomes := state.Outcomes()
-	if len(outcomes) == 0 {
-		t.Fatal("expected action results")
-	}
-	first := outcomes[0]
-	if first.AnomalyScore == nil || *first.AnomalyScore != 10 {
-		t.Fatalf("expected anomaly score 10 in action result, got %+v", first.AnomalyScore)
-	}
-	if first.Threshold == nil || *first.Threshold != 5 {
-		t.Fatalf("expected threshold 5 in action result, got %+v", first.Threshold)
-	}
-	if first.ThresholdSource != model.ThresholdSourceEnvOverride {
-		t.Fatalf("unexpected threshold source: %q", first.ThresholdSource)
-	}
-
-	errorResult, errorResp := service.handleMessage(state, &extprocv3.ProcessingRequest{
-		Request: &extprocv3.ProcessingRequest_RequestBody{
-			RequestBody: &extprocv3.HttpBody{
-				Body:        []byte("payload"),
-				EndOfStream: true,
-			},
-		},
+		})
+		if result.Decision != model.DecisionAllow {
+			t.Fatalf("expected allow decision, got %q", result.Decision)
+		}
+		if resp.GetResponseHeaders() == nil {
+			t.Fatal("expected continue response headers response")
+		}
 	})
-	if errorResult.Decision != model.DecisionError {
-		t.Fatalf("expected error decision for internal crash, got %q", errorResult.Decision)
-	}
-	if errorResult.HTTPStatusCode != 503 {
-		t.Fatalf("expected HTTP 503 for on_error deny, got %d", errorResult.HTTPStatusCode)
-	}
-	if errorResp.GetImmediateResponse() == nil {
-		t.Fatal("expected immediate deny response for internal crash")
-	}
-	if errorResp.GetImmediateResponse().GetStatus().GetCode() != typev3.StatusCode_ServiceUnavailable {
-		t.Fatalf("expected ServiceUnavailable code, got %s", errorResp.GetImmediateResponse().GetStatus().GetCode().String())
-	}
+
+	t.Run("response body", func(t *testing.T) {
+		stub := &stubSession{
+			requestHeadersResult:  model.Result{Decision: model.DecisionAllow},
+			responseHeadersResult: model.Result{Decision: model.DecisionAllow},
+			responseBodyResult: model.Result{
+				Decision: model.DecisionError,
+				Err:      errors.New("synthetic response body failure"),
+			},
+		}
+		service := newStubService(t, map[string]ProfileRuntime{
+			"strict": newStubRuntime("strict", model.EngineModeBlock, stub, model.ThresholdInfo{}, model.ThresholdInfo{}),
+		}, "strict")
+
+		state := service.newStreamState()
+		_, _ = service.handleMessage(state, requestHeadersMessageWithEndOfStream("/ok", nil, true))
+		_, _ = service.handleMessage(state, &extprocv3.ProcessingRequest{
+			Request: &extprocv3.ProcessingRequest_ResponseHeaders{
+				ResponseHeaders: &extprocv3.HttpHeaders{
+					Headers: headerMap(":status", "200"),
+				},
+			},
+		})
+		result, resp := service.handleMessage(state, &extprocv3.ProcessingRequest{
+			Request: &extprocv3.ProcessingRequest_ResponseBody{
+				ResponseBody: &extprocv3.HttpBody{
+					Body:        []byte("payload"),
+					EndOfStream: true,
+				},
+			},
+		})
+		if result.Decision != model.DecisionAllow {
+			t.Fatalf("expected allow decision, got %q", result.Decision)
+		}
+		if resp.GetResponseBody() == nil {
+			t.Fatal("expected continue response body response")
+		}
+	})
 }
 
 func requestHeadersMessage(path string, attributes map[string]*structpb.Struct) *extprocv3.ProcessingRequest {
@@ -740,13 +724,15 @@ func (s *stubSession) ProcessResponseBodyChunk([]byte, bool) model.Result {
 func (s *stubSession) Close() {}
 
 type capturingRecorder struct {
-	request model.Request
-	result  model.Result
-	called  bool
+	request    model.Request
+	engineMode model.EngineMode
+	result     model.Result
+	called     bool
 }
 
-func (r *capturingRecorder) Record(req model.Request, result model.Result) {
+func (r *capturingRecorder) Record(req model.Request, engineMode model.EngineMode, result model.Result) {
 	r.request = req
+	r.engineMode = engineMode
 	r.result = result
 	r.called = true
 }
@@ -787,36 +773,41 @@ func (s *stubProcessStream) SetTrailer(metadata.MD)       {}
 func (s *stubProcessStream) SendMsg(any) error            { return nil }
 func (s *stubProcessStream) RecvMsg(any) error            { return nil }
 
-func intPtr(value int) *int {
-	return &value
-}
-
-func newEvaluatorRuntime(t *testing.T, name string, mode model.Mode, onError model.OnErrorPolicy) ProfileRuntime {
+func newEvaluatorRuntime(t *testing.T, name string, mode model.EngineMode) ProfileRuntime {
 	t.Helper()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	evaluator, err := waf.NewEvaluatorWithDirectives(4096, testDirectives, logger)
+	evaluator, err := waf.NewEvaluatorWithDirectives(directivesForMode(mode), logger)
 	if err != nil {
 		t.Fatalf("new evaluator: %v", err)
 	}
-	runtime, err := NewProfileRuntime(name, evaluator, mode, onError)
+	runtime, err := NewProfileRuntime(name, evaluator, mode)
 	if err != nil {
 		t.Fatalf("new profile runtime: %v", err)
 	}
 	return runtime
 }
 
+func directivesForMode(mode model.EngineMode) string {
+	switch mode {
+	case model.EngineModeDetect:
+		return detectTestDirectives
+	case model.EngineModeOff:
+		return strings.ReplaceAll(blockTestDirectives, "SecRuleEngine On", "SecRuleEngine Off")
+	default:
+		return blockTestDirectives
+	}
+}
+
 func newStubRuntime(
 	name string,
-	mode model.Mode,
-	onError model.OnErrorPolicy,
+	mode model.EngineMode,
 	stub Session,
 	inboundThreshold model.ThresholdInfo,
 	outboundThreshold model.ThresholdInfo,
 ) ProfileRuntime {
 	return ProfileRuntime{
-		Name:    name,
-		Mode:    mode,
-		OnError: onError,
+		Name:       name,
+		EngineMode: mode,
 		NewSession: func(model.Request) Session {
 			return stub
 		},
